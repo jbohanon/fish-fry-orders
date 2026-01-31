@@ -26,14 +26,14 @@
                                 <td>
                                     <ul class="items-list">
                                         {{range .Items}}
-                                            <li>{{.Quantity}}x {{.MenuItemID}}</li>
+                                            <li>{{.Quantity}}x {{if .MenuItemName}}{{.MenuItemName}}{{else}}{{.MenuItemID}}{{end}}</li>
                                         {{end}}
                                     </ul>
                                 </td>
                                 <td>
                                     <span class="status-badge status-{{.Status}}">{{.Status}}</span>
                                 </td>
-                                <td>{{.CreatedAt}}</td>
+                                <td class="created-at" data-timestamp="{{.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.CreatedAt.Format "3:04 PM"}}</td>
                                 <td>
                                     <button class="btn-small advance-status" data-order-id="{{.ID}}" data-current-status="{{.Status}}">
                                         {{if eq .Status "new"}}Start Order{{else if eq .Status "in-progress"}}Complete Order{{else}}—{{end}}

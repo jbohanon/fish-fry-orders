@@ -5,7 +5,7 @@ metadata:
   name: {{ .Values.gloo.virtualService.name }}
   namespace: {{ .Values.gloo.namespace }}
   labels:
-    {{- include "fish-fry-orders.labels" . | nindent 4 }}
+    {{- include "fish-fry-orders-v2.labels" . | nindent 4 }}
 spec:
   {{- if .Values.gloo.virtualService.ssl.enabled }}
   sslConfig:

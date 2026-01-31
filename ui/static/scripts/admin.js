@@ -105,6 +105,12 @@ function updateStats(stats) {
 
 // Show edit menu item modal
 function showEditItemModal(itemId = null) {
+    // Remove any existing modal first
+    const existingModal = document.querySelector('.modal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
     const modal = document.createElement('div');
     modal.className = 'modal';
     modal.innerHTML = `

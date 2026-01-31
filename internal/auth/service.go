@@ -53,6 +53,9 @@ func (s *Service) Login(r *http.Request, w http.ResponseWriter, password string)
 	sessionID := uuid.New().String()
 	s.sessions[sessionID] = user
 
+	// Determine if request is over HTTPS (directly or via proxy)
+	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+
 	// Set session cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
@@ -60,8 +63,8 @@ func (s *Service) Login(r *http.Request, w http.ResponseWriter, password string)
 		Path:     "/",
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   isSecure,
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	return user, sessionID, nil
@@ -69,15 +72,15 @@ func (s *Service) Login(r *http.Request, w http.ResponseWriter, password string)
 
 // Logout removes the session cookie
 func (s *Service) Logout(w http.ResponseWriter) {
-	// Remove session cookie
+	// Remove session cookie (set Secure=false to ensure it clears in both HTTP and HTTPS)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
 		Value:    "",
 		Path:     "/",
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   false,
+		SameSite: http.SameSiteLaxMode,
 	})
 }
 

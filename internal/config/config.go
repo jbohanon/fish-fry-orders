@@ -2,6 +2,9 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -40,8 +43,8 @@ type GRPCConfig struct {
 }
 
 type AuthConfig struct {
-	WorkerPassword string `yaml:"worker_password"`
-	AdminPassword  string `yaml:"admin_password"`
+	WorkerPassword string `yaml:"worker"`
+	AdminPassword  string `yaml:"admin"`
 }
 
 func Load() (*Config, error) {
@@ -63,7 +66,19 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	// Override with environment variables if set (legacy support)
+	// Load database config from secret mount if available
+	if err := loadSecretConfig("/app/secrets/database", &cfg.Database); err != nil {
+		// Not fatal - might be running locally without secrets
+		_ = err
+	}
+
+	// Load auth config from secret mount if available
+	if err := loadSecretConfig("/app/secrets/auth", &cfg.Auth); err != nil {
+		// Not fatal - might be running locally without secrets
+		_ = err
+	}
+
+	// Override with environment variables if set (fallback for local dev)
 	if dbPass := os.Getenv("DB_PASSWORD"); dbPass != "" {
 		cfg.Database.Password = dbPass
 	}
@@ -82,4 +97,58 @@ func Load() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// loadSecretConfig reads all files in a secret mount directory and unmarshals them into the target struct.
+// Kubernetes secrets mount each key as a separate file, so we read all files and merge them.
+func loadSecretConfig(secretPath string, target any) error {
+	// Check if the secret directory exists
+	info, err := os.Stat(secretPath)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+
+	// Read all files in the directory
+	entries, err := os.ReadDir(secretPath)
+	if err != nil {
+		return err
+	}
+
+	// Build a map from all secret keys
+	secretData := make(map[string]any)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		// Skip hidden files (like ..data symlinks in k8s secrets)
+		if entry.Name()[0] == '.' {
+			continue
+		}
+
+		filePath := filepath.Join(secretPath, entry.Name())
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		// Store the content with the filename as key
+		// Try to parse as int first for numeric fields like port
+		strContent := strings.TrimSpace(string(content))
+		if intVal, err := strconv.Atoi(strContent); err == nil {
+			secretData[entry.Name()] = intVal
+		} else {
+			secretData[entry.Name()] = strContent
+		}
+	}
+
+	// Marshal to YAML and unmarshal into target to merge
+	yamlData, err := yaml.Marshal(secretData)
+	if err != nil {
+		return err
+	}
+
+	return yaml.Unmarshal(yamlData, target)
 }

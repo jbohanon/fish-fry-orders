@@ -196,6 +196,14 @@ document.addEventListener('DOMContentLoaded', function() {
             // Hide the form and show the order ID prominently
             form.style.display = 'none';
             orderIdNumber.textContent = `#${orderData.id}`;
+            
+            // Show total if available
+            const totalDisplay = document.getElementById('order-total');
+            if (totalDisplay && orderData.total !== undefined) {
+                totalDisplay.textContent = `$${orderData.total.toFixed(2)}`;
+                totalDisplay.style.display = 'block';
+            }
+            
             orderIdDisplay.style.display = 'block';
             
             // Scroll to top to show the order ID

@@ -50,20 +50,23 @@ type CreateOrderItemRequest struct {
 
 // OrderResponse represents an order in the API response
 type OrderResponse struct {
-	ID                 int              `json:"id"`
-	VehicleDescription string           `json:"vehicle_description"`
-	CustomerName       string           `json:"customerName"` // Alias for vehicle_description for frontend
-	Status             string           `json:"status"`
+	ID                 int                 `json:"id"`
+	VehicleDescription string              `json:"vehicle_description"`
+	CustomerName       string              `json:"customerName"` // Alias for vehicle_description for frontend
+	Status             string              `json:"status"`
 	Items              []OrderItemResponse `json:"items"`
-	CreatedAt          string           `json:"created_at"`
-	UpdatedAt          string           `json:"updated_at"`
+	Total              float64             `json:"total"`
+	CreatedAt          string              `json:"created_at"`
+	UpdatedAt          string              `json:"updated_at"`
 }
 
 type OrderItemResponse struct {
-	ID         string `json:"id"`
-	MenuItemID string `json:"menu_item_id"`
-	MenuItemId string `json:"menuItemId"` // Also support camelCase for frontend
-	Quantity   int32  `json:"quantity"`
+	ID           string  `json:"id"`
+	MenuItemID   string  `json:"menu_item_id"`
+	MenuItemId   string  `json:"menuItemId"` // Also support camelCase for frontend
+	MenuItemName string  `json:"menuItemName"`
+	Price        float64 `json:"price"`
+	Quantity     int32   `json:"quantity"`
 }
 
 // CreateOrder handles POST /api/orders
@@ -146,6 +149,17 @@ func (h *OrderHandler) GetOrders(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get orders")
 	}
 
+	// Get menu items for name/price lookup
+	menuItems, err := h.repo.GetMenuItems(c.Request().Context())
+	if err != nil {
+		logger.ErrorWithErr("Failed to get menu items", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get menu items")
+	}
+	menuItemMap := make(map[string]types.DBMenuItem)
+	for _, mi := range menuItems {
+		menuItemMap[mi.ID] = mi
+	}
+
 	responses := make([]OrderResponse, 0, len(orders))
 	for _, order := range orders {
 		// Get order items
@@ -154,12 +168,22 @@ func (h *OrderHandler) GetOrders(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get order items")
 		}
 
+		var total float64
 		itemResponses := make([]OrderItemResponse, 0, len(items))
 		for _, item := range items {
+			var menuItemName string
+			var price float64
+			if mi, ok := menuItemMap[item.MenuItemID]; ok {
+				menuItemName = mi.Name
+				price = mi.Price
+			}
+			total += price * float64(item.Quantity)
 			itemResponses = append(itemResponses, OrderItemResponse{
-				ID:         item.ID,
-				MenuItemID: item.MenuItemID,
-				Quantity:   item.Quantity,
+				ID:           item.ID,
+				MenuItemID:   item.MenuItemID,
+				MenuItemName: menuItemName,
+				Price:        price,
+				Quantity:     item.Quantity,
 			})
 		}
 
@@ -169,6 +193,7 @@ func (h *OrderHandler) GetOrders(c echo.Context) error {
 			CustomerName:       order.VehicleDescription, // Alias for frontend
 			Status:             normalizeStatus(order.Status),
 			Items:              itemResponses,
+			Total:              total,
 			CreatedAt:          order.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			UpdatedAt:          order.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
@@ -204,13 +229,34 @@ func (h *OrderHandler) getOrderResponse(c echo.Context, orderID int) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get order items")
 	}
 
+	// Get menu items for name/price lookup
+	menuItems, err := h.repo.GetMenuItems(c.Request().Context())
+	if err != nil {
+		logger.ErrorWithErr("Failed to get menu items", err, "order_id", orderID)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get menu items")
+	}
+	menuItemMap := make(map[string]types.DBMenuItem)
+	for _, mi := range menuItems {
+		menuItemMap[mi.ID] = mi
+	}
+
+	var total float64
 	itemResponses := make([]OrderItemResponse, 0, len(items))
 	for _, item := range items {
+		var menuItemName string
+		var price float64
+		if mi, ok := menuItemMap[item.MenuItemID]; ok {
+			menuItemName = mi.Name
+			price = mi.Price
+		}
+		total += price * float64(item.Quantity)
 		itemResponses = append(itemResponses, OrderItemResponse{
-			ID:         item.ID,
-			MenuItemID: item.MenuItemID,
-			MenuItemId: item.MenuItemID, // Also set camelCase version
-			Quantity:   item.Quantity,
+			ID:           item.ID,
+			MenuItemID:   item.MenuItemID,
+			MenuItemId:   item.MenuItemID, // Also set camelCase version
+			MenuItemName: menuItemName,
+			Price:        price,
+			Quantity:     item.Quantity,
 		})
 	}
 
@@ -220,6 +266,7 @@ func (h *OrderHandler) getOrderResponse(c echo.Context, orderID int) error {
 		CustomerName:       order.VehicleDescription, // Alias for frontend
 		Status:             normalizeStatus(order.Status),
 		Items:              itemResponses,
+		Total:              total,
 		CreatedAt:          order.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:          order.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	})
@@ -364,6 +411,13 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 		h.clientsLock.Unlock()
 	}()
 
+	// Get menu items for name/price lookup
+	menuItems, _ := h.repo.GetMenuItems(c.Request().Context())
+	menuItemMap := make(map[string]types.DBMenuItem)
+	for _, mi := range menuItems {
+		menuItemMap[mi.ID] = mi
+	}
+
 	// Send initial orders
 	orders, err := h.repo.GetOrders(c.Request().Context())
 	if err == nil {
@@ -371,10 +425,19 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 			items, _ := h.repo.GetOrderItems(c.Request().Context(), order.ID)
 			itemResponses := make([]OrderItemResponse, 0, len(items))
 			for _, item := range items {
+				var menuItemName string
+				var price float64
+				if mi, ok := menuItemMap[item.MenuItemID]; ok {
+					menuItemName = mi.Name
+					price = mi.Price
+				}
 				itemResponses = append(itemResponses, OrderItemResponse{
-					ID:         item.ID,
-					MenuItemID: item.MenuItemID,
-					Quantity:   item.Quantity,
+					ID:           item.ID,
+					MenuItemID:   item.MenuItemID,
+					MenuItemId:   item.MenuItemID,
+					MenuItemName: menuItemName,
+					Price:        price,
+					Quantity:     item.Quantity,
 				})
 			}
 
@@ -383,6 +446,7 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 				"order": OrderResponse{
 					ID:                 order.ID,
 					VehicleDescription: order.VehicleDescription,
+					CustomerName:       order.VehicleDescription,
 					Status:             normalizeStatus(order.Status),
 					Items:              itemResponses,
 					CreatedAt:          order.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -409,15 +473,30 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 
 // BroadcastNewOrder sends a new order notification to all connected WebSocket clients
 func (h *OrderHandler) BroadcastNewOrder(ctx context.Context, order *types.DBOrder) {
+	// Get menu items for name/price lookup
+	menuItems, _ := h.repo.GetMenuItems(ctx)
+	menuItemMap := make(map[string]types.DBMenuItem)
+	for _, mi := range menuItems {
+		menuItemMap[mi.ID] = mi
+	}
+
 	// Get items for this order
 	orderItems, _ := h.repo.GetOrderItems(ctx, order.ID)
 	itemResponses := make([]OrderItemResponse, 0, len(orderItems))
 	for _, item := range orderItems {
+		var menuItemName string
+		var price float64
+		if mi, ok := menuItemMap[item.MenuItemID]; ok {
+			menuItemName = mi.Name
+			price = mi.Price
+		}
 		itemResponses = append(itemResponses, OrderItemResponse{
-			ID:         item.ID,
-			MenuItemID: item.MenuItemID,
-			MenuItemId: item.MenuItemID, // Also set camelCase version
-			Quantity:   item.Quantity,
+			ID:           item.ID,
+			MenuItemID:   item.MenuItemID,
+			MenuItemId:   item.MenuItemID, // Also set camelCase version
+			MenuItemName: menuItemName,
+			Price:        price,
+			Quantity:     item.Quantity,
 		})
 	}
 
@@ -455,15 +534,30 @@ func (h *OrderHandler) BroadcastNewOrder(ctx context.Context, order *types.DBOrd
 
 // BroadcastOrderUpdate sends order updates to all connected WebSocket clients
 func (h *OrderHandler) BroadcastOrderUpdate(ctx context.Context, order *types.DBOrder) {
+	// Get menu items for name/price lookup
+	menuItems, _ := h.repo.GetMenuItems(ctx)
+	menuItemMap := make(map[string]types.DBMenuItem)
+	for _, mi := range menuItems {
+		menuItemMap[mi.ID] = mi
+	}
+
 	// Get items for this order
 	orderItems, _ := h.repo.GetOrderItems(ctx, order.ID)
 	itemResponses := make([]OrderItemResponse, 0, len(orderItems))
 	for _, item := range orderItems {
+		var menuItemName string
+		var price float64
+		if mi, ok := menuItemMap[item.MenuItemID]; ok {
+			menuItemName = mi.Name
+			price = mi.Price
+		}
 		itemResponses = append(itemResponses, OrderItemResponse{
-			ID:         item.ID,
-			MenuItemID: item.MenuItemID,
-			MenuItemId: item.MenuItemID, // Also set camelCase version
-			Quantity:   item.Quantity,
+			ID:           item.ID,
+			MenuItemID:   item.MenuItemID,
+			MenuItemId:   item.MenuItemID, // Also set camelCase version
+			MenuItemName: menuItemName,
+			Price:        price,
+			Quantity:     item.Quantity,
 		})
 	}
 

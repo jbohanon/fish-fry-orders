@@ -3,9 +3,9 @@
 replicaCount: 1
 
 image:
-  repository: git.nonahob.net/jbohanon/fish-fry-orders
+  repository: git.nonahob.net/jacob/fish-fry-orders-v2
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
   pullSecrets:
     - name: regcred
 
@@ -13,30 +13,17 @@ service:
   type: ClusterIP
   port: 8080
 
-# Database configuration
+# Database configuration - uses secretRef to mount full config
 database:
-  host: "192.168.10.70"
-  port: 5432
-  user: "postgres"
-  dbname: "fish_fry_orders"
-  sslmode: "disable"
-  # Password can be provided directly or via existing secret
-  password: ""
-  existingSecret:
-    enabled: false
-    name: ""
-    key: "password"
+  secretRef:
+    name: postgres
+    namespace: ""  # defaults to release namespace if empty
 
-# Authentication passwords
+# Authentication - uses secretRef to mount full config
 auth:
-  workerPassword: ""
-  adminPassword: ""
-  # Or use existing secret
-  existingSecret:
-    enabled: false
-    name: ""
-    workerPasswordKey: "worker-password"
-    adminPasswordKey: "admin-password"
+  secretRef:
+    name: user-auth
+    namespace: ""  # defaults to release namespace if empty
 
 # Redis configuration (optional)
 redis:
@@ -54,12 +41,12 @@ gloo:
   # Upstream configuration
   upstream:
     enabled: true
-    name: fish-fry-orders-upstream
+    name: fish-fry-orders-v2-upstream
   
   # VirtualService configuration
   virtualService:
     enabled: true
-    name: fish-fry-orders
+    name: fish-fry-orders-v2
     domains:
       - stmichaelfishfry.com
     # SSL configuration (certificate should be managed by cert-manager)

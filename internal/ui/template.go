@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"io"
 	"path/filepath"
+	"time"
 )
 
 // TemplateData represents the data passed to templates
@@ -17,6 +18,7 @@ type TemplateData struct {
 	Order           Order // For order details page
 	Messages        []Message
 	Stats           Stats // Statistics for admin dashboard
+	BuildVersion    string
 }
 
 // Stats represents statistics data
@@ -40,13 +42,16 @@ type Order struct {
 	CustomerName string
 	Items        []OrderItem
 	Status       string
-	CreatedAt    string
+	CreatedAt    time.Time
+	Total        float64
 }
 
 // OrderItem represents an item in an order
 type OrderItem struct {
-	MenuItemID string
-	Quantity   int
+	MenuItemID   string
+	MenuItemName string
+	Quantity     int
+	Price        float64
 }
 
 // Message represents a chat message

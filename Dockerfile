@@ -16,8 +16,10 @@ RUN go mod download
 # Copy the rest of the application
 COPY . .
 
-# Build the server binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server cmd/server/main.go
+# Build the server binary with build timestamp
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags "-X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S_UTC')" \
+    -o server cmd/server/main.go
 
 # Runtime stage
 FROM alpine:latest

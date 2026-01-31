@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "fish-fry-orders.fullname" . }}
+  name: {{ include "fish-fry-orders-v2.fullname" . }}
   labels:
-    {{- include "fish-fry-orders.labels" . | nindent 4 }}
+    {{- include "fish-fry-orders-v2.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "fish-fry-orders.selectorLabels" . | nindent 6 }}
+      {{- include "fish-fry-orders-v2.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
-        {{- include "fish-fry-orders.selectorLabels" . | nindent 8 }}
+        {{- include "fish-fry-orders-v2.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -36,37 +36,6 @@ spec:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          env:
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  {{- if .Values.database.existingSecret.enabled }}
-                  name: {{ .Values.database.existingSecret.name }}
-                  key: {{ .Values.database.existingSecret.key }}
-                  {{- else }}
-                  name: {{ include "fish-fry-orders.fullname" . }}-secret
-                  key: db-password
-                  {{- end }}
-            - name: AUTH_WORKER_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  {{- if .Values.auth.existingSecret.enabled }}
-                  name: {{ .Values.auth.existingSecret.name }}
-                  key: {{ .Values.auth.existingSecret.workerPasswordKey }}
-                  {{- else }}
-                  name: {{ include "fish-fry-orders.fullname" . }}-secret
-                  key: auth-worker-password
-                  {{- end }}
-            - name: AUTH_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  {{- if .Values.auth.existingSecret.enabled }}
-                  name: {{ .Values.auth.existingSecret.name }}
-                  key: {{ .Values.auth.existingSecret.adminPasswordKey }}
-                  {{- else }}
-                  name: {{ include "fish-fry-orders.fullname" . }}-secret
-                  key: auth-admin-password
-                  {{- end }}
           ports:
             - name: http
               containerPort: 8080
@@ -93,7 +62,19 @@ spec:
             - name: config
               mountPath: /app/config.yaml
               subPath: config.yaml
+            - name: db-secret
+              mountPath: /app/secrets/database
+              readOnly: true
+            - name: auth-secret
+              mountPath: /app/secrets/auth
+              readOnly: true
       volumes:
         - name: config
           configMap:
-            name: {{ include "fish-fry-orders.fullname" . }}-config
+            name: {{ include "fish-fry-orders-v2.fullname" . }}-config
+        - name: db-secret
+          secret:
+            secretName: {{ .Values.database.secretRef.name }}
+        - name: auth-secret
+          secret:
+            secretName: {{ .Values.auth.secretRef.name }}

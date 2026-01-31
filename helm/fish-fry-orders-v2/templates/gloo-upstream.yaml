@@ -5,10 +5,10 @@ metadata:
   name: {{ .Values.gloo.upstream.name }}
   namespace: {{ .Values.gloo.namespace }}
   labels:
-    {{- include "fish-fry-orders.labels" . | nindent 4 }}
+    {{- include "fish-fry-orders-v2.labels" . | nindent 4 }}
 spec:
   kube:
-    serviceName: {{ include "fish-fry-orders.fullname" . }}
+    serviceName: {{ include "fish-fry-orders-v2.fullname" . }}
     serviceNamespace: {{ .Release.Namespace }}
     servicePort: {{ .Values.service.port }}
 {{- end }}

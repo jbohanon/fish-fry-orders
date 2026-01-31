@@ -67,9 +67,18 @@ body {
 }
 
 .nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
     font-size: 1.5rem;
     font-weight: 700;
     letter-spacing: -0.5px;
+}
+
+.nav-logo {
+    height: 40px;
+    width: auto;
+    object-fit: contain;
 }
 
 .nav-links {
@@ -115,21 +124,6 @@ body {
     transform: translateY(-1px);
 }
 
-/* Logo Area */
-.logo-area {
-    text-align: center;
-    padding: 2rem 0;
-    background: white;
-    box-shadow: var(--shadow-sm);
-}
-
-.logo {
-    max-width: 300px;
-    max-height: 150px;
-    height: auto;
-    object-fit: contain;
-    border-radius: 8px;
-}
 
 /* Main Content */
 .main-content {
@@ -1063,6 +1057,21 @@ form .btn,
         transform: translateX(0);
         opacity: 1;
     }
+}
+
+/* Footer */
+.app-footer {
+    margin-top: auto;
+    padding: 0.75rem 1rem;
+    text-align: center;
+    background-color: var(--surface-color);
+    border-top: 1px solid var(--border-color);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.build-version {
+    font-family: monospace;
 }
 
 /* Responsive Design */

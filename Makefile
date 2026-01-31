@@ -2,7 +2,7 @@
 
 # Container registry - override with: make docker-push REGISTRY=myregistry.io
 REGISTRY ?= git.nonahob.net
-IMAGE_NAME ?= jbohanon/fish-fry-orders
+IMAGE_NAME ?= jacob/fish-fry-orders-v2
 VERSION ?= latest
 
 all: proto backend
@@ -56,19 +56,19 @@ migrate-down:
 
 # Helm chart operations
 helm-lint:
-	helm lint helm/fish-fry-orders
+	helm lint helm/fish-fry-orders-v2
 
 helm-template:
-	helm template fish-fry-orders helm/fish-fry-orders
+	helm template fish-fry-orders-v2 helm/fish-fry-orders-v2 -n fish-fry-orders-v2
 
 helm-install:
-	helm install fish-fry-orders helm/fish-fry-orders
+	helm install fish-fry-orders-v2 helm/fish-fry-orders-v2 -n fish-fry-orders-v2 --create-namespace
 
 helm-upgrade:
-	helm upgrade fish-fry-orders helm/fish-fry-orders
+	helm upgrade fish-fry-orders-v2 helm/fish-fry-orders-v2 -n fish-fry-orders-v2
 
 helm-uninstall:
-	helm uninstall fish-fry-orders
+	helm uninstall fish-fry-orders-v2 -n fish-fry-orders-v2
 
 # Create deployment directory (for local/VM deployment without K8s)
 deploy: clean backend

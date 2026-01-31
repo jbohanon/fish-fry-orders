@@ -1,10 +1,14 @@
 document.addEventListener('DOMContentLoaded', function() {
+    // Format timestamps to local time
+    formatTimestamps();
+    
     // Don't reload orders if server already rendered them - just set up WebSocket
     // The server-side rendering already has the correct sort order
     // loadOrders(); // Commented out to preserve server-side sort order
     
     // Initialize WebSocket connection for real-time updates
-    const ws = new WebSocket(`ws://${window.location.host}/ws/orders`);
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/orders`);
     
     // Handle WebSocket connection
     ws.onopen = function() {
@@ -55,7 +59,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ status: nextStatus })
+                    body: JSON.stringify({ status: nextStatus }),
+                    credentials: 'include'
                 });
 
                 if (!response.ok) {
@@ -101,18 +106,8 @@ function updateOrderCard(order) {
             }
         }
         
-        // Update created date if it exists
-        const createdAt = order.createdAt || order.created_at;
-        if (createdAt) {
-            const createdAtCell = row.querySelector('td:nth-child(5)');
-            if (createdAtCell) {
-                createdAtCell.textContent = createdAt;
-            }
-        }
-        
-        // After status update, we need to re-sort the table
-        // Reload the page to get correct sort order
-        // (Alternatively, we could move the row to the correct position)
+        // Note: We don't update createdAt here because it never changes
+        // and the server-rendered value is already correctly formatted
     }
 }
 
@@ -123,7 +118,7 @@ function createOrderRow(order) {
     row.dataset.orderId = order.id;
     
     const itemsList = order.items.map(item => 
-        `<li>${item.quantity}x ${item.menu_item_id || item.menuItemId || 'Unknown'}</li>`
+        `<li>${item.quantity}x ${item.menuItemName || item.menu_item_name || item.menu_item_id || item.menuItemId || 'Unknown'}</li>`
     ).join('');
     
     let buttonText = '—';
@@ -137,14 +132,19 @@ function createOrderRow(order) {
     }
     
     // Format created date - handle both camelCase and snake_case
-    const createdAt = order.createdAt || order.created_at || '—';
+    const createdAtRaw = order.createdAt || order.created_at || '';
+    let createdAtFormatted = '—';
+    if (createdAtRaw) {
+        const date = new Date(createdAtRaw);
+        createdAtFormatted = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
     
     row.innerHTML = `
         <td><a href="/orders/${order.id}" class="order-link">#${order.id}</a></td>
         <td>${order.customerName || order.vehicleDescription}</td>
         <td><ul class="items-list">${itemsList}</ul></td>
         <td><span class="status-badge status-${order.status}">${order.status}</span></td>
-        <td>${createdAt}</td>
+        <td class="created-at">${createdAtFormatted}</td>
         <td>
             <button class="btn-small advance-status" data-order-id="${order.id}" data-current-status="${order.status}" ${buttonDisabled}>
                 ${buttonText}
@@ -174,7 +174,8 @@ function createOrderRow(order) {
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ status: nextStatus })
+                    body: JSON.stringify({ status: nextStatus }),
+                    credentials: 'include'
                 });
 
                 if (!response.ok) {
@@ -290,6 +291,17 @@ async function loadOrders() {
     } catch (error) {
         console.error('Error loading orders:', error);
     }
+}
+
+// Format timestamps to local time
+function formatTimestamps() {
+    document.querySelectorAll('.created-at[data-timestamp]').forEach(el => {
+        const timestamp = el.dataset.timestamp;
+        if (timestamp) {
+            const date = new Date(timestamp);
+            el.textContent = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        }
+    });
 }
 
 // Show toast notification

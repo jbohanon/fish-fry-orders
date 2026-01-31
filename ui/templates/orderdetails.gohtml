@@ -18,7 +18,11 @@
                 <span class="status-badge status-{{.Order.Status}}">{{.Order.Status}}</span>
             </div>
             <div class="info-row">
-                <strong>Created:</strong> {{.Order.CreatedAt}}
+                <strong>Created:</strong> 
+                <span class="created-at" data-timestamp="{{.Order.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.Order.CreatedAt.Format "3:04 PM"}}</span>
+            </div>
+            <div class="info-row">
+                <strong>Total:</strong> ${{printf "%.2f" .Order.Total}}
             </div>
         </div>
 
@@ -26,7 +30,7 @@
             <h3>Items</h3>
             <ul class="items-list">
                 {{range .Order.Items}}
-                    <li>{{.Quantity}}x {{.MenuItemID}}</li>
+                    <li>{{.Quantity}}x {{if .MenuItemName}}{{.MenuItemName}}{{else}}{{.MenuItemID}}{{end}} {{if .Price}}(${{printf "%.2f" .Price}} each){{end}}</li>
                 {{end}}
             </ul>
         </div>

@@ -13,7 +13,10 @@
         <!-- Navigation Bar -->
         <nav class="navbar">
             <div class="navbar-container">
-                <div class="nav-brand">Fish Fry Orders</div>
+                <div class="nav-brand">
+                    <img src="/static/images/fish-fry-logo-trans.png" alt="Fish Fry Logo" class="nav-logo">
+                    <span>Fish Fry Orders</span>
+                </div>
                 <div class="nav-links">
                     <a href="/orders/new">New Order</a>
                     <a href="/orders">Orders</a>
@@ -27,11 +30,6 @@
             </div>
         </nav>
 
-        <!-- Logo Area -->
-        <div class="logo-area">
-            <img src="/static/images/fish-fry-logo.jpg" alt="Fish Fry Logo" class="logo">
-        </div>
-
         <!-- Main Content Area -->
         <main class="main-content">
             {{if .Error}}
@@ -39,6 +37,11 @@
             {{end}}
             {{block "content" .}}{{end}}
         </main>
+
+        <!-- Footer with build info -->
+        <footer class="app-footer">
+            {{if .BuildVersion}}<span class="build-version">Build: {{.BuildVersion}}</span>{{end}}
+        </footer>
     </div>
 
     {{block "scripts" .}}{{end}}
