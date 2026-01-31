@@ -1,0 +1,14 @@
+{{define "homepage"}}
+{{template "head"}}
+<body>
+{{template "header"}}
+<div class="centered">
+Welcome Home!
+<br>
+<a href="/outside">Outside worker</a>
+<br>
+<a href="/inside">Inside worker</a>
+</div>
+{{template "footer" .Version}}
+</body>
+{{end}}

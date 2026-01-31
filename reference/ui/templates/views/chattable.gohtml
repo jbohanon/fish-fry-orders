@@ -1,0 +1,16 @@
+{{define "chattable"}}
+<table class='centered'>
+<tr>
+<th>Time</th>
+<th>From</th>
+<th>Msg</th>
+</tr>
+{{range .Chats}}
+<tr>
+<td>{{.Time}}</td>
+<td>{{.From}}</td>
+<td>{{.Data}}</td>
+</tr>
+{{end}} {{/*range .Orders*/}}
+</table>
+{{end}}

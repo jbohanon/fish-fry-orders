@@ -1,0 +1,37 @@
+# Build output
+_output/
+bin/
+
+# Dependencies
+node_modules/
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+*.test
+testing.test
+coverage.out
+coverage.html
+
+# Local config overrides (may contain secrets)
+config.local.yaml
+.env
+.env.*
+
+# Compiled binaries
+migrate
+server
+
+# Temporary files
+*.tmp
+*.log

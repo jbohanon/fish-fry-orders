@@ -1,0 +1,57 @@
+{{define "head"}}
+    <title>Orders - Fish Fry Orders</title>
+{{end}}
+
+{{define "content"}}
+    <div class="orders-container">
+        <h2>Orders</h2>
+        <div class="orders-table-wrapper">
+            <table class="orders-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Vehicle</th>
+                        <th>Items</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{if .Orders}}
+                        {{range .Orders}}
+                            <tr class="order-row status-{{.Status}}" data-order-id="{{.ID}}">
+                                <td><a href="/orders/{{.ID}}" class="order-link">#{{.ID}}</a></td>
+                                <td>{{.CustomerName}}</td>
+                                <td>
+                                    <ul class="items-list">
+                                        {{range .Items}}
+                                            <li>{{.Quantity}}x {{.MenuItemID}}</li>
+                                        {{end}}
+                                    </ul>
+                                </td>
+                                <td>
+                                    <span class="status-badge status-{{.Status}}">{{.Status}}</span>
+                                </td>
+                                <td>{{.CreatedAt}}</td>
+                                <td>
+                                    <button class="btn-small advance-status" data-order-id="{{.ID}}" data-current-status="{{.Status}}">
+                                        {{if eq .Status "new"}}Start Order{{else if eq .Status "in-progress"}}Complete Order{{else}}—{{end}}
+                                    </button>
+                                </td>
+                            </tr>
+                        {{end}}
+                    {{else}}
+                        <tr>
+                            <td colspan="6" class="no-orders">No orders found.</td>
+                        </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{{end}}
+
+{{define "scripts"}}
+    <script src="/static/scripts/orders.js"></script>
+{{end}} 

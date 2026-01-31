@@ -1,0 +1,25 @@
+{{define "head"}}
+    <title>Login - Fish Fry Orders</title>
+{{end}}
+
+{{define "content"}}
+<div class="auth-page">
+    <div class="auth-container">
+        <div class="auth-box">
+            <h1>Fish Fry Orders</h1>
+            <form id="loginForm" class="auth-form">
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Login</button>
+            </form>
+            <div id="errorMessage" class="error-message"></div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+    <script src="/static/scripts/auth.js"></script>
+{{end}} 

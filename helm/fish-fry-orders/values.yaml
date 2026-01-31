@@ -1,0 +1,85 @@
+# Fish Fry Orders Helm Chart Values
+
+replicaCount: 1
+
+image:
+  repository: git.nonahob.net/jbohanon/fish-fry-orders
+  tag: latest
+  pullPolicy: IfNotPresent
+  pullSecrets:
+    - name: regcred
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Database configuration
+database:
+  host: "192.168.10.70"
+  port: 5432
+  user: "postgres"
+  dbname: "fish_fry_orders"
+  sslmode: "disable"
+  # Password can be provided directly or via existing secret
+  password: ""
+  existingSecret:
+    enabled: false
+    name: ""
+    key: "password"
+
+# Authentication passwords
+auth:
+  workerPassword: ""
+  adminPassword: ""
+  # Or use existing secret
+  existingSecret:
+    enabled: false
+    name: ""
+    workerPasswordKey: "worker-password"
+    adminPasswordKey: "admin-password"
+
+# Redis configuration (optional)
+redis:
+  enabled: false
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+
+# Gloo Edge configuration
+gloo:
+  # Namespace where Gloo Edge is installed
+  namespace: gloo-ee-system
+  
+  # Upstream configuration
+  upstream:
+    enabled: true
+    name: fish-fry-orders-upstream
+  
+  # VirtualService configuration
+  virtualService:
+    enabled: true
+    name: fish-fry-orders
+    domains:
+      - stmichaelfishfry.com
+    # SSL configuration (certificate should be managed by cert-manager)
+    ssl:
+      enabled: false
+      secretName: stmichaelfishfry-tls
+    # WebSocket configuration for /ws/* routes
+    websocket:
+      enabled: true
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

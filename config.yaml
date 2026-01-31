@@ -1,0 +1,24 @@
+database:
+  host: 192.168.10.70
+  port: 5432
+  user: postgres
+  password: "${DB_PASSWORD}"  # Set via environment variable
+  dbname: fish_fry_orders
+  sslmode: disable
+
+redis:
+  enabled: false
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+
+http:
+  address: ":8080"
+
+grpc:
+  address: ":50051"
+
+auth:
+  worker_password: "${AUTH_WORKER_PASSWORD}"  # Set via environment variable
+  admin_password: "${AUTH_ADMIN_PASSWORD}"    # Set via environment variable 

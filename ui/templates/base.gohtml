@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fish Fry Orders</title>
+    <link rel="stylesheet" href="/static/styles/styles.css">
+    <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+    {{block "head" .}}{{end}}
+</head>
+<body>
+    <div class="app-container">
+        <!-- Navigation Bar -->
+        <nav class="navbar">
+            <div class="navbar-container">
+                <div class="nav-brand">Fish Fry Orders</div>
+                <div class="nav-links">
+                    <a href="/orders/new">New Order</a>
+                    <a href="/orders">Orders</a>
+                    {{if eq .UserRole "admin"}}
+                    <a href="/admin">Admin</a>
+                    {{end}}
+                    <form method="POST" action="/api/auth/logout" style="display: inline;">
+                        <button type="submit" style="background: none; border: none; color: inherit; cursor: pointer; text-decoration: underline; padding: 0; font: inherit;">Logout</button>
+                    </form>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Logo Area -->
+        <div class="logo-area">
+            <img src="/static/images/fish-fry-logo.jpg" alt="Fish Fry Logo" class="logo">
+        </div>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            {{if .Error}}
+            <div class="error-message">{{.Error}}</div>
+            {{end}}
+            {{block "content" .}}{{end}}
+        </main>
+    </div>
+
+    {{block "scripts" .}}{{end}}
+</body>
+</html> 

@@ -1,0 +1,53 @@
+{{define "head"}}
+    <title>Order #{{.Order.ID}} - Fish Fry Orders</title>
+{{end}}
+
+{{define "content"}}
+    <div class="order-details-container">
+        <div class="order-details-header">
+            <h2>Order #{{.Order.ID}}</h2>
+            <a href="/orders" class="btn-secondary">Back to Orders</a>
+        </div>
+        
+        <div class="order-info-card">
+            <div class="info-row">
+                <strong>Vehicle:</strong> {{.Order.CustomerName}}
+            </div>
+            <div class="info-row">
+                <strong>Status:</strong> 
+                <span class="status-badge status-{{.Order.Status}}">{{.Order.Status}}</span>
+            </div>
+            <div class="info-row">
+                <strong>Created:</strong> {{.Order.CreatedAt}}
+            </div>
+        </div>
+
+        <div class="order-items-card">
+            <h3>Items</h3>
+            <ul class="items-list">
+                {{range .Order.Items}}
+                    <li>{{.Quantity}}x {{.MenuItemID}}</li>
+                {{end}}
+            </ul>
+        </div>
+
+        <div class="order-actions-card">
+            <h3>Update Status</h3>
+            <form id="status-update-form" class="status-form">
+                <div class="form-group">
+                    <label for="status-select">Status:</label>
+                    <select id="status-select" name="status" class="status-select">
+                        <option value="new" {{if eq .Order.Status "new"}}selected{{end}}>New</option>
+                        <option value="in-progress" {{if eq .Order.Status "in-progress"}}selected{{end}}>In Progress</option>
+                        <option value="completed" {{if eq .Order.Status "completed"}}selected{{end}}>Completed</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn-primary">Update Status</button>
+            </form>
+        </div>
+    </div>
+{{end}}
+
+{{define "scripts"}}
+    <script src="/static/scripts/orderdetails.js"></script>
+{{end}}

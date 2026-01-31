@@ -1,0 +1,32 @@
+{{define "ordertable"}}
+<h3>Orders</h3>
+<pre id='orders-date'></pre>
+<table class='centered'>
+<tr>
+<th style='width:50px;'>Order</th>
+<th style='width:50px;'>Fried</th>
+<th style='width:50px;'>Baked</th>
+<th style='width:50px;'>Kids</th>
+<th style='width:200px;'>Vehicle</th>
+<th style='width:75;'></th>
+</tr>
+{{range .Orders}}
+<tr{{if gt .State 1}} class='strikeout' style='background-color: #90ee90;'
+{{else if gt .State 0}} style='background-color: #ffff80'
+{{else}} style='background-color: #ff8080'
+{{end}}>
+<td>{{.Id}}</td>
+<td>{{.Fried}}</td>
+<td>{{.Baked}}</td>
+<td>{{.Kids}}</td>
+<td>{{.Vehicle}}</td>
+<td>{{if eq .State 0 }}
+<button onClick=orderPulled({{.Id}})>Pulled</button>
+{{else if eq .State 1 }}
+<button onClick=orderComplete({{.Id}})>Complete</button>
+{{else}} Done
+{{end}}</td>
+</tr>
+{{end}} {{/*range .Orders*/}}
+</table>
+{{end}}

@@ -1,0 +1,14 @@
+{{- if .Values.gloo.upstream.enabled }}
+apiVersion: gloo.solo.io/v1
+kind: Upstream
+metadata:
+  name: {{ .Values.gloo.upstream.name }}
+  namespace: {{ .Values.gloo.namespace }}
+  labels:
+    {{- include "fish-fry-orders.labels" . | nindent 4 }}
+spec:
+  kube:
+    serviceName: {{ include "fish-fry-orders.fullname" . }}
+    serviceNamespace: {{ .Release.Namespace }}
+    servicePort: {{ .Values.service.port }}
+{{- end }}

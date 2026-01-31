@@ -1,0 +1,15 @@
+{{define "stats"}}
+{{template "head"}}
+<body>
+{{template "header"}}
+<div class="centered">
+<pre>
+Stats for today's fish fry
+Fried: {{.Fried}}
+Baked: {{.Baked}}
+Kids:  {{.Kids}}
+</pre>
+</div>
+{{template "footer" .Version}}
+</body>
+{{end}}

@@ -1,0 +1,21 @@
+{{define "orders"}}
+{{template "head"}}
+<body>
+{{template "header"}}
+<div class="centered">
+<h3>Chat</h3>
+<pre id="chat-date"></pre>
+<div style="margin-left: 12%" class="centered scrollable">
+{{template "chat" "inside"}}
+</div>
+<div style="width=100%;">
+<hr>
+</div>
+<div class="centered" id="orders-list" class="scrollable">
+</div>
+</div>
+<script src="/static/scripts/ws.js"></script>
+<script src="/static/scripts/orders.js"></script>
+{{template "footer" .Version}}
+</body>
+{{end}}
