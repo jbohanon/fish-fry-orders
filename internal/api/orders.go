@@ -77,13 +77,10 @@ func (h *OrderHandler) CreateOrder(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	// Validate request - accept either vehicle_description or customerName
+	// Accept either vehicle_description or customerName (both optional)
 	vehicleDesc := req.VehicleDescription
 	if vehicleDesc == "" {
 		vehicleDesc = req.CustomerName
-	}
-	if vehicleDesc == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "vehicle_description or customerName is required")
 	}
 	if len(req.Items) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one item is required")

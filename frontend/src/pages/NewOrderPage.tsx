@@ -26,7 +26,7 @@ export function NewOrderPage() {
     return (
       <Layout>
         <div className="max-w-2xl mx-auto">
-          <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-8 rounded-xl text-center shadow-lg border-4 border-white animate-pulse-order">
+          <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-8 rounded-xl text-center shadow-lg border-4 border-white">
             <div className="text-sm font-semibold uppercase tracking-wide mb-4 opacity-95">
               Your Order Number
             </div>

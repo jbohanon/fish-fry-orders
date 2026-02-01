@@ -1,7 +1,0 @@
-- the orders should restart at 1 for each day's fish fry. we want them to stay in the database for historical analysis, but they should render as starting at 1. this might mean that the id needs to have a date component that's stripped before rendering in the ui.
-- when an order is successfully created, the total should be shown to the user alongside the order number.
-- the orders numbers didn't reset even when the orders were purged in the admin page
-- the admin page "total revenue" value doesn't show when the page is loaded, but it does show up when a new order is submitted
-- the menu items need to be able to be reordered in the admin
-- the new order page quantity box doesn't allow you to backspace the 1, leading to weird behavior
-- the new order page should detect a duplicate item being added (or simply not show items that are on the order already in the dropdown) and not allow it. the functionality in the go templates version was such that it would increment the quantity on the item already in the list. I think simply excluding it from the list is cleaner though.

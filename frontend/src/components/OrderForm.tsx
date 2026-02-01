@@ -62,11 +62,6 @@ export function OrderForm({ onSubmit, isSubmitting }: OrderFormProps) {
     e.preventDefault();
     setError(null);
 
-    if (!customerName.trim()) {
-      setError('Vehicle description is required');
-      return;
-    }
-
     const validItems = items
       .filter((item) => item.menuItemId)
       .map((item) => ({
@@ -99,7 +94,7 @@ export function OrderForm({ onSubmit, isSubmitting }: OrderFormProps) {
 
       <div className="flex flex-col gap-2">
         <label htmlFor="customerName" className="font-semibold text-slate-800 text-sm">
-          Vehicle Description
+          Vehicle Description <span className="font-normal text-slate-500">(optional)</span>
         </label>
         <input
           type="text"
@@ -117,18 +112,18 @@ export function OrderForm({ onSubmit, isSubmitting }: OrderFormProps) {
           {items.map((item, index) => (
             <div
               key={index}
-              className="grid grid-cols-[2fr_1fr_auto] gap-3 items-end p-4 bg-slate-50 rounded-lg border border-slate-200"
+              className="flex flex-col gap-3 p-4 bg-slate-50 rounded-lg border border-slate-200 sm:flex-row sm:items-end"
             >
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1 flex-grow">
                 <label className="text-sm text-slate-600">Menu Item</label>
                 <select
                   value={item.menuItemId}
                   onChange={(e) => handleItemChange(index, 'menuItemId', e.target.value)}
-                  className="p-3 border border-slate-300 rounded-md bg-white"
+                  className="p-3 border border-slate-300 rounded-md bg-white w-full"
                 >
                   <option value="">Select item...</option>
                   {menuItems
-                    .filter((menuItem) => 
+                    .filter((menuItem) =>
                       // Show item if it's the current selection OR not already selected elsewhere
                       menuItem.id === item.menuItemId || !getSelectedItemIds(index).includes(menuItem.id)
                     )
@@ -139,25 +134,28 @@ export function OrderForm({ onSubmit, isSubmitting }: OrderFormProps) {
                     ))}
                 </select>
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-sm text-slate-600">Quantity</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={item.quantity}
-                  onChange={(e) => handleItemChange(index, 'quantity', e.target.value === '' ? '' : parseInt(e.target.value) || '')}
-                  onBlur={() => handleQuantityBlur(index)}
-                  className="p-3 border border-slate-300 rounded-md"
-                />
+              <div className="flex gap-3 items-end">
+                <div className="flex flex-col gap-1 flex-grow sm:flex-grow-0">
+                  <label className="text-sm text-slate-600">Qty</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={item.quantity}
+                    onChange={(e) => handleItemChange(index, 'quantity', e.target.value === '' ? '' : parseInt(e.target.value) || '')}
+                    onBlur={() => handleQuantityBlur(index)}
+                    className="p-3 border border-slate-300 rounded-md w-20"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveItem(index)}
+                  disabled={items.length === 1}
+                  className="px-4 py-3 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  aria-label="Remove item"
+                >
+                  Remove
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => handleRemoveItem(index)}
-                disabled={items.length === 1}
-                className="px-4 py-3 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Remove
-              </button>
             </div>
           ))}
         </div>

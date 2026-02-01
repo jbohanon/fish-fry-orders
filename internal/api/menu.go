@@ -133,18 +133,18 @@ func (h *MenuHandler) UpdateMenuItem(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	// Validate request
-	if req.Name == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
-	}
-	if req.Price <= 0 {
-		return echo.NewHTTPError(http.StatusBadRequest, "price must be greater than 0")
+	// Validate price if provided
+	if req.Price < 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "price must be greater than or equal to 0")
 	}
 
-	// Update menu item
-	item.Name = req.Name
-	item.Price = req.Price
-	// Only update IsActive if it was provided in the request
+	// Update menu item - only update fields that are provided
+	if req.Name != "" {
+		item.Name = req.Name
+	}
+	if req.Price > 0 {
+		item.Price = req.Price
+	}
 	if req.IsActive != nil {
 		item.IsActive = *req.IsActive
 	}

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Layout } from '../components/Layout';
 import { useOrders } from '../hooks/useOrders';
-import { getMenuItems, createMenuItem, deleteMenuItem, updateMenuItemsOrder } from '../api/menu';
+import { getMenuItems, createMenuItem, deleteMenuItem, updateMenuItemsOrder, updateMenuItem } from '../api/menu';
 import { purgeOrders } from '../api/orders';
 import type { MenuItem } from '../types';
 
@@ -14,11 +14,19 @@ export function AdminPage() {
   // Collapsible sections
   const [menuExpanded, setMenuExpanded] = useState(true);
   const [statsExpanded, setStatsExpanded] = useState(true);
+  const [ordersByItemExpanded, setOrdersByItemExpanded] = useState(false);
   const [purgeExpanded, setPurgeExpanded] = useState(false);
+
+  // Drilldown state
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
   // New menu item form
   const [newItemName, setNewItemName] = useState('');
   const [newItemPrice, setNewItemPrice] = useState('');
+
+  // Edit menu item state
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingPrice, setEditingPrice] = useState('');
 
   useEffect(() => {
     loadMenuItems();
@@ -62,6 +70,33 @@ export function AdminPage() {
       setMenuItems(menuItems.filter((item) => item.id !== id));
     } catch (e) {
       setError('Failed to delete menu item');
+    }
+  };
+
+  const handleStartEdit = (item: MenuItem) => {
+    setEditingItemId(item.id);
+    setEditingPrice(item.price.toFixed(2));
+  };
+
+  const handleCancelEdit = () => {
+    setEditingItemId(null);
+    setEditingPrice('');
+  };
+
+  const handleSavePrice = async (id: string) => {
+    const price = parseFloat(editingPrice);
+    if (isNaN(price) || price < 0) {
+      setError('Invalid price');
+      return;
+    }
+
+    try {
+      const updated = await updateMenuItem(id, { price });
+      setMenuItems(menuItems.map((item) => (item.id === id ? updated : item)));
+      setEditingItemId(null);
+      setEditingPrice('');
+    } catch (e) {
+      setError('Failed to update menu item price');
     }
   };
 
@@ -124,6 +159,46 @@ export function AdminPage() {
     revenue: totalRevenue,
   };
 
+  // Calculate revenue and quantity per menu item
+  const itemRevenueStats = menuItems.map((menuItem) => {
+    const ordersWithItem = orders.filter((order) =>
+      order.items.some((item) => item.menuItemId === menuItem.id || item.menu_item_id === menuItem.id)
+    );
+    const totalQuantity = orders.reduce((sum, order) => {
+      const item = order.items.find((i) => i.menuItemId === menuItem.id || i.menu_item_id === menuItem.id);
+      return sum + (item?.quantity || 0);
+    }, 0);
+    const revenue = totalQuantity * menuItem.price;
+    return {
+      menuItem,
+      orderCount: ordersWithItem.length,
+      totalQuantity,
+      revenue,
+      orders: ordersWithItem,
+    };
+  }).filter((stat) => stat.totalQuantity > 0); // Only show items that have been sold
+
+  const totalItemRevenue = itemRevenueStats.reduce((sum, stat) => sum + stat.revenue, 0);
+
+  // Generate pie chart gradient
+  const pieColors = [
+    '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+    '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
+  ];
+  let cumulativePercent = 0;
+  const pieGradientStops = itemRevenueStats.map((stat, index) => {
+    const percent = totalItemRevenue > 0 ? (stat.revenue / totalItemRevenue) * 100 : 0;
+    const start = cumulativePercent;
+    cumulativePercent += percent;
+    const color = pieColors[index % pieColors.length];
+    return `${color} ${start}% ${cumulativePercent}%`;
+  }).join(', ');
+  const pieGradient = itemRevenueStats.length > 0
+    ? `conic-gradient(${pieGradientStops})`
+    : 'conic-gradient(#e2e8f0 0% 100%)';
+
+  const selectedItemStats = itemRevenueStats.find((s) => s.menuItem.id === selectedItemId);
+
   return (
     <Layout>
       <div className="flex flex-col gap-8">
@@ -158,6 +233,95 @@ export function AdminPage() {
                   <div className="text-3xl font-bold text-blue-600">${displayStats.revenue.toFixed(2)}</div>
                 </div>
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* Revenue by Item Section */}
+        <div className="bg-white rounded-xl shadow-md overflow-hidden">
+          <div
+            className="flex justify-between items-center p-6 cursor-pointer hover:bg-slate-50 transition-colors"
+            onClick={() => setOrdersByItemExpanded(!ordersByItemExpanded)}
+          >
+            <h3 className="text-xl font-semibold text-slate-800">Revenue by Item</h3>
+            <button className="text-slate-500 text-xl">{ordersByItemExpanded ? '▼' : '▶'}</button>
+          </div>
+          {ordersByItemExpanded && (
+            <div className="px-6 pb-6">
+              {itemRevenueStats.length === 0 ? (
+                <p className="text-slate-500 text-center py-4">No items sold yet.</p>
+              ) : (
+                <div className="flex flex-col lg:flex-row gap-6">
+                  {/* Pie Chart */}
+                  <div className="flex flex-col items-center gap-4">
+                    <div
+                      className="w-48 h-48 rounded-full shadow-inner"
+                      style={{ background: pieGradient }}
+                    />
+                    <div className="text-center">
+                      <div className="text-sm text-slate-500">Total Revenue</div>
+                      <div className="text-xl font-bold text-blue-600">${totalItemRevenue.toFixed(2)}</div>
+                    </div>
+                  </div>
+
+                  {/* Item List */}
+                  <div className="flex-1 flex flex-col gap-2">
+                    {itemRevenueStats.map((stat, index) => (
+                      <div key={stat.menuItem.id}>
+                        <button
+                          onClick={() => setSelectedItemId(selectedItemId === stat.menuItem.id ? null : stat.menuItem.id)}
+                          className={`w-full flex justify-between items-center p-3 rounded-lg border transition-all ${
+                            selectedItemId === stat.menuItem.id
+                              ? 'bg-blue-50 border-blue-300'
+                              : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-4 h-4 rounded-sm shrink-0"
+                              style={{ backgroundColor: pieColors[index % pieColors.length] }}
+                            />
+                            <span className="font-medium text-slate-800">{stat.menuItem.name}</span>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm">
+                            <span className="text-slate-500">{stat.totalQuantity} sold</span>
+                            <span className="font-semibold text-emerald-600">${stat.revenue.toFixed(2)}</span>
+                            <span className="text-slate-400 text-xs">
+                              ({totalItemRevenue > 0 ? ((stat.revenue / totalItemRevenue) * 100).toFixed(0) : 0}%)
+                            </span>
+                            <span className="text-slate-400">{selectedItemId === stat.menuItem.id ? '▼' : '▶'}</span>
+                          </div>
+                        </button>
+                        {selectedItemId === stat.menuItem.id && selectedItemStats && (
+                          <div className="mt-2 ml-6 border-l-2 border-blue-200 pl-4">
+                            <div className="flex flex-col gap-2 py-2">
+                              {selectedItemStats.orders.map((order) => {
+                                const item = order.items.find(
+                                  (i) => i.menuItemId === stat.menuItem.id || i.menu_item_id === stat.menuItem.id
+                                );
+                                return (
+                                  <a
+                                    key={order.id}
+                                    href={`/orders/${order.id}`}
+                                    className="flex justify-between items-center p-2 bg-white rounded border border-slate-200 hover:border-blue-300 hover:bg-blue-50 transition-all text-sm"
+                                  >
+                                    <span className="font-medium text-blue-600">
+                                      #{order.dailyOrderNumber || order.id}
+                                    </span>
+                                    <span className="text-slate-600">
+                                      {item?.quantity}x - {order.customerName || order.vehicle_description || 'No vehicle'}
+                                    </span>
+                                  </a>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -204,7 +368,40 @@ export function AdminPage() {
                           </div>
                           <div>
                             <h4 className="font-semibold text-slate-800">{item.name}</h4>
-                            <span className="text-blue-600 font-semibold">${item.price.toFixed(2)}</span>
+                            {editingItemId === item.id ? (
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-slate-600">$</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={editingPrice}
+                                  onChange={(e) => setEditingPrice(e.target.value)}
+                                  className="p-1 border border-slate-300 rounded w-20 text-sm"
+                                  autoFocus
+                                />
+                                <button
+                                  onClick={() => handleSavePrice(item.id)}
+                                  className="px-2 py-1 bg-emerald-500 text-white rounded text-xs font-medium hover:bg-emerald-600"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  onClick={handleCancelEdit}
+                                  className="px-2 py-1 bg-slate-400 text-white rounded text-xs font-medium hover:bg-slate-500"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => handleStartEdit(item)}
+                                className="text-blue-600 font-semibold hover:underline"
+                                title="Click to edit price"
+                              >
+                                ${item.price.toFixed(2)}
+                              </button>
+                            )}
                           </div>
                         </div>
                         <button
