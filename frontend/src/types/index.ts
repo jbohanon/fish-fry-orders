@@ -1,4 +1,5 @@
 export type OrderStatus = 'new' | 'in-progress' | 'completed';
+export type SessionStatus = 'ACTIVE' | 'CLOSED';
 
 export interface OrderItem {
   id: string;
@@ -38,6 +39,60 @@ export interface User {
   role: 'worker' | 'admin';
 }
 
+// Session types
+export interface Session {
+  id: number;
+  eventName: string;
+  startedAt: string;
+  expiresAt: string;
+  closedAt?: string;
+  status: SessionStatus;
+  finalOrderCount?: number;
+  finalRevenue?: number;
+  notes?: string;
+  currentOrderCount?: number;
+  currentRevenue?: number;
+}
+
+export interface SessionResponse {
+  active: boolean;
+  session?: Session;
+}
+
+export interface CreateSessionRequest {
+  eventName?: string;
+  expiresAt?: string;
+  notes?: string;
+}
+
+export interface UpdateSessionRequest {
+  eventName?: string;
+  expiresAt?: string;
+  notes?: string;
+}
+
+export interface SessionComparisonItem {
+  sessionId: number;
+  eventName: string;
+  startedAt: string;
+  orderCount: number;
+  revenue: number;
+}
+
+export interface ItemBreakdown {
+  itemName: string;
+  quantity: number;
+  revenue: number;
+  percent: number;
+}
+
+export interface SessionComparisonResponse {
+  sessions: SessionComparisonItem[];
+  totalOrders: number;
+  totalRevenue: number;
+  itemBreakdown: ItemBreakdown[];
+}
+
 export interface CreateOrderRequest {
   customerName: string;
   items: {
@@ -60,9 +115,11 @@ export interface PurgeOrdersResponse {
 }
 
 export interface WebSocketMessage {
-  type: 'order_new' | 'order_update' | 'stats_update';
+  type: 'order_new' | 'order_update' | 'stats_update' | 'session_update' | 'session_closed';
   order?: Order;
   stats?: Stats;
+  session?: Session;
+  active?: boolean;
 }
 
 export interface ChatMessage {

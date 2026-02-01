@@ -1,4 +1,5 @@
 # Fish Fry Orders Helm Chart Values
+namespace: fish-fry-orders-dev
 
 # Backend (Go API) configuration
 backend:
@@ -65,32 +66,16 @@ gloo:
   # Namespace where Gloo Edge is installed
   namespace: gloo-ee-system
 
-  # Backend upstream configuration
-  backendUpstream:
-    enabled: true
-    name: fish-fry-orders-api-upstream
-
-  # Frontend upstream configuration
-  frontendUpstream:
-    enabled: true
-    name: fish-fry-orders-frontend-upstream
-
   # VirtualService configuration
   virtualService:
     enabled: true
-    name: fish-fry-orders
+    name: fish-fry-orders-dev
     domains:
-      - stmichaelfishfry.com
+      - fish-fry-orders-dev.nonahob.net
     # SSL configuration (certificate should be managed by cert-manager)
     ssl:
-      enabled: false
-      secretName: stmichaelfishfry-tls
+      enabled: true
+      secretName: nonahob-tls
     # WebSocket configuration for /ws/* routes
     websocket:
       enabled: true
-
-nodeSelector: {}
-
-tolerations: []
-
-affinity: {}

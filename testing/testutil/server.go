@@ -30,6 +30,7 @@ func NewTestServer(repo database.Repository) *TestServer {
 	orderHandler := api.NewOrderHandler(repo)
 	menuHandler := api.NewMenuHandler(repo)
 	chatHandler := api.NewChatHandler(repo)
+	sessionHandler := api.NewSessionHandler(repo, orderHandler)
 
 	// Middleware
 	e.Use(middleware.Logger())
@@ -44,17 +45,33 @@ func NewTestServer(repo database.Repository) *TestServer {
 
 	// API routes (protected)
 	apiGroup := e.Group("/api", authService.Middleware())
+	
+	// Session routes
+	apiGroup.GET("/session", sessionHandler.GetCurrentSession)
+	apiGroup.POST("/session", sessionHandler.CreateSession)
+	apiGroup.PUT("/session/:id", sessionHandler.UpdateSession)
+	apiGroup.POST("/session/:id/close", sessionHandler.CloseSession)
+	apiGroup.GET("/sessions", sessionHandler.GetSessions)
+	apiGroup.GET("/sessions/compare", sessionHandler.CompareSessions)
+	apiGroup.GET("/sessions/:id", sessionHandler.GetSession)
+	apiGroup.GET("/sessions/:id/orders", sessionHandler.GetSessionOrders)
+	
+	// Order routes
 	apiGroup.POST("/orders", orderHandler.CreateOrder)
 	apiGroup.GET("/orders", orderHandler.GetOrders)
 	apiGroup.GET("/orders/:id", orderHandler.GetOrder)
 	apiGroup.PUT("/orders/:id/status", orderHandler.UpdateOrderStatus)
+	apiGroup.DELETE("/orders/purge", orderHandler.PurgeOrders)
+	
+	// Menu routes
 	apiGroup.GET("/menu-items", menuHandler.GetMenuItems)
 	apiGroup.GET("/menu-items/:id", menuHandler.GetMenuItem)
 	apiGroup.POST("/menu-items", menuHandler.CreateMenuItem)
 	apiGroup.PUT("/menu-items/:id", menuHandler.UpdateMenuItem)
 	apiGroup.PUT("/menu-items/order", menuHandler.UpdateMenuItemsOrder)
 	apiGroup.DELETE("/menu-items/:id", menuHandler.DeleteMenuItem)
-	apiGroup.DELETE("/orders/purge", orderHandler.PurgeOrders)
+	
+	// Chat routes
 	apiGroup.POST("/orders/:id/messages", chatHandler.CreateMessage)
 	apiGroup.GET("/orders/:id/messages", chatHandler.GetMessages)
 

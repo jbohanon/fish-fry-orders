@@ -22,6 +22,277 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
+// Sessions
+
+func (r *PostgresRepository) GetActiveSession(ctx context.Context) (*types.DBSession, error) {
+	query := `
+		SELECT id, event_name, started_at, expires_at, closed_at, status, 
+		       final_order_count, final_revenue, notes, created_at, updated_at
+		FROM sessions 
+		WHERE status = 'ACTIVE' AND expires_at > NOW()
+		ORDER BY started_at DESC
+		LIMIT 1
+	`
+	var session types.DBSession
+	err := r.pool.QueryRow(ctx, query).Scan(
+		&session.ID, &session.EventName, &session.StartedAt, &session.ExpiresAt,
+		&session.ClosedAt, &session.Status, &session.FinalOrderCount, &session.FinalRevenue,
+		&session.Notes, &session.CreatedAt, &session.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active session: %w", err)
+	}
+	return &session, nil
+}
+
+func (r *PostgresRepository) GetSessionByID(ctx context.Context, id int) (*types.DBSession, error) {
+	query := `
+		SELECT id, event_name, started_at, expires_at, closed_at, status, 
+		       final_order_count, final_revenue, notes, created_at, updated_at
+		FROM sessions 
+		WHERE id = $1
+	`
+	var session types.DBSession
+	err := r.pool.QueryRow(ctx, query, id).Scan(
+		&session.ID, &session.EventName, &session.StartedAt, &session.ExpiresAt,
+		&session.ClosedAt, &session.Status, &session.FinalOrderCount, &session.FinalRevenue,
+		&session.Notes, &session.CreatedAt, &session.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+	return &session, nil
+}
+
+func (r *PostgresRepository) GetSessions(ctx context.Context, from, to *time.Time) ([]types.DBSession, error) {
+	query := `
+		SELECT id, event_name, started_at, expires_at, closed_at, status, 
+		       final_order_count, final_revenue, notes, created_at, updated_at
+		FROM sessions 
+		WHERE ($1::timestamp IS NULL OR started_at >= $1)
+		  AND ($2::timestamp IS NULL OR started_at <= $2)
+		ORDER BY started_at DESC
+	`
+	rows, err := r.pool.Query(ctx, query, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []types.DBSession
+	for rows.Next() {
+		var session types.DBSession
+		if err := rows.Scan(
+			&session.ID, &session.EventName, &session.StartedAt, &session.ExpiresAt,
+			&session.ClosedAt, &session.Status, &session.FinalOrderCount, &session.FinalRevenue,
+			&session.Notes, &session.CreatedAt, &session.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan session: %w", err)
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, nil
+}
+
+func (r *PostgresRepository) CreateSession(ctx context.Context, session *types.DBSession) error {
+	session.CreatedAt = time.Now()
+	session.UpdatedAt = session.CreatedAt
+	if session.Status == "" {
+		session.Status = "ACTIVE"
+	}
+
+	query := `
+		INSERT INTO sessions (event_name, started_at, expires_at, status, notes, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id
+	`
+	err := r.pool.QueryRow(ctx, query,
+		session.EventName, session.StartedAt, session.ExpiresAt, session.Status,
+		session.Notes, session.CreatedAt, session.UpdatedAt,
+	).Scan(&session.ID)
+	if err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) UpdateSession(ctx context.Context, session *types.DBSession) error {
+	session.UpdatedAt = time.Now()
+
+	query := `
+		UPDATE sessions 
+		SET event_name = $1, expires_at = $2, status = $3, notes = $4, updated_at = $5
+		WHERE id = $6
+	`
+	_, err := r.pool.Exec(ctx, query,
+		session.EventName, session.ExpiresAt, session.Status, session.Notes,
+		session.UpdatedAt, session.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update session: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) CloseSession(ctx context.Context, sessionID int) error {
+	// Get current stats
+	orderCount, revenue, err := r.GetSessionStats(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to get session stats: %w", err)
+	}
+
+	now := time.Now()
+	query := `
+		UPDATE sessions 
+		SET status = 'CLOSED', closed_at = $1, final_order_count = $2, final_revenue = $3, updated_at = $1
+		WHERE id = $4
+	`
+	_, err = r.pool.Exec(ctx, query, now, orderCount, revenue, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to close session: %w", err)
+	}
+
+	// Mark all incomplete orders as completed
+	err = r.CompleteAllSessionOrders(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to complete session orders: %w", err)
+	}
+
+	return nil
+}
+
+func (r *PostgresRepository) GetOrCreateActiveSession(ctx context.Context) (*types.DBSession, error) {
+	// Try to get existing active session
+	session, err := r.GetActiveSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if session != nil {
+		return session, nil
+	}
+
+	// Create new session
+	now := time.Now()
+	// Default expiry is end of today (midnight)
+	endOfDay := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, now.Location())
+
+	session = &types.DBSession{
+		EventName: fmt.Sprintf("Fish Fry %s", now.Format("2006-01-02")),
+		StartedAt: now,
+		ExpiresAt: endOfDay,
+		Status:    "ACTIVE",
+	}
+
+	if err := r.CreateSession(ctx, session); err != nil {
+		return nil, err
+	}
+
+	logger.Info("Auto-created new session", "session_id", session.ID, "event_name", session.EventName)
+	return session, nil
+}
+
+func (r *PostgresRepository) GetNextDailyOrderNumber(ctx context.Context, sessionID int) (int, error) {
+	var nextNum int
+	query := `SELECT COALESCE(MAX(daily_order_number), 0) + 1 FROM orders WHERE session_id = $1`
+	err := r.pool.QueryRow(ctx, query, sessionID).Scan(&nextNum)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get next daily order number: %w", err)
+	}
+	return nextNum, nil
+}
+
+func (r *PostgresRepository) GetSessionStats(ctx context.Context, sessionID int) (orderCount int, revenue float64, err error) {
+	query := `
+		SELECT 
+			COUNT(DISTINCT o.id)::int,
+			COALESCE(SUM(oi.unit_price * oi.quantity), 0)
+		FROM orders o
+		LEFT JOIN order_items oi ON o.id = oi.order_id
+		WHERE o.session_id = $1
+	`
+	err = r.pool.QueryRow(ctx, query, sessionID).Scan(&orderCount, &revenue)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get session stats: %w", err)
+	}
+	return orderCount, revenue, nil
+}
+
+func (r *PostgresRepository) CompareSessionStats(ctx context.Context, sessionIDs []int) ([]SessionComparisonStats, error) {
+	results := make([]SessionComparisonStats, 0, len(sessionIDs))
+
+	for _, sessionID := range sessionIDs {
+		session, err := r.GetSessionByID(ctx, sessionID)
+		if err != nil || session == nil {
+			continue
+		}
+
+		orderCount, revenue, err := r.GetSessionStats(ctx, sessionID)
+		if err != nil {
+			continue
+		}
+
+		// Get item breakdown
+		itemQuery := `
+			SELECT oi.item_name, SUM(oi.quantity)::int, SUM(oi.unit_price * oi.quantity)
+			FROM order_items oi
+			JOIN orders o ON oi.order_id = o.id
+			WHERE o.session_id = $1
+			GROUP BY oi.item_name
+			ORDER BY SUM(oi.unit_price * oi.quantity) DESC
+		`
+		rows, err := r.pool.Query(ctx, itemQuery, sessionID)
+		if err != nil {
+			continue
+		}
+
+		itemBreakdown := make(map[string]ItemStats)
+		for rows.Next() {
+			var itemName string
+			var quantity int
+			var itemRevenue float64
+			if err := rows.Scan(&itemName, &quantity, &itemRevenue); err != nil {
+				continue
+			}
+			itemBreakdown[itemName] = ItemStats{
+				ItemName: itemName,
+				Quantity: quantity,
+				Revenue:  itemRevenue,
+			}
+		}
+		rows.Close()
+
+		results = append(results, SessionComparisonStats{
+			SessionID:     sessionID,
+			EventName:     session.EventName,
+			StartedAt:     session.StartedAt,
+			OrderCount:    orderCount,
+			Revenue:       revenue,
+			ItemBreakdown: itemBreakdown,
+		})
+	}
+
+	return results, nil
+}
+
+func (r *PostgresRepository) CompleteAllSessionOrders(ctx context.Context, sessionID int) error {
+	query := `
+		UPDATE orders 
+		SET status = 'COMPLETED', updated_at = NOW()
+		WHERE session_id = $1 AND status != 'COMPLETED'
+	`
+	_, err := r.pool.Exec(ctx, query, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to complete session orders: %w", err)
+	}
+	return nil
+}
+
 // Menu items
 
 func (r *PostgresRepository) GetMenuItems(ctx context.Context) ([]types.DBMenuItem, error) {
@@ -121,12 +392,24 @@ func (r *PostgresRepository) UpdateMenuItemsOrder(ctx context.Context, itemOrder
 // Orders
 
 func (r *PostgresRepository) GetOrders(ctx context.Context) ([]types.DBOrder, error) {
-	// Sort by: status priority (IN_PROGRESS first, then NEW, then COMPLETED), then by ID ascending
-	// Include daily_order_number calculated using window function
+	// Get orders for the current active session only
+	session, err := r.GetActiveSession(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active session: %w", err)
+	}
+	if session == nil {
+		// No active session, return empty list
+		return []types.DBOrder{}, nil
+	}
+	return r.GetOrdersBySession(ctx, session.ID)
+}
+
+func (r *PostgresRepository) GetOrdersBySession(ctx context.Context, sessionID int) ([]types.DBOrder, error) {
+	// Sort by: status priority (IN_PROGRESS first, then NEW, then COMPLETED), then by daily_order_number ascending
 	query := `
-		SELECT id, vehicle_description, status, created_at, updated_at,
-			ROW_NUMBER() OVER (PARTITION BY DATE(created_at) ORDER BY id) as daily_order_number
+		SELECT id, session_id, daily_order_number, vehicle_description, status, created_at, updated_at
 		FROM orders 
+		WHERE session_id = $1
 		ORDER BY 
 			CASE status 
 				WHEN 'IN_PROGRESS' THEN 1
@@ -134,9 +417,9 @@ func (r *PostgresRepository) GetOrders(ctx context.Context) ([]types.DBOrder, er
 				WHEN 'COMPLETED' THEN 3
 				ELSE 4
 			END,
-			id ASC
+			daily_order_number ASC
 	`
-	rows, err := r.pool.Query(ctx, query)
+	rows, err := r.pool.Query(ctx, query, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get orders: %w", err)
 	}
@@ -145,7 +428,7 @@ func (r *PostgresRepository) GetOrders(ctx context.Context) ([]types.DBOrder, er
 	var orders []types.DBOrder
 	for rows.Next() {
 		var order types.DBOrder
-		if err := rows.Scan(&order.ID, &order.VehicleDescription, &order.Status, &order.CreatedAt, &order.UpdatedAt, &order.DailyOrderNumber); err != nil {
+		if err := rows.Scan(&order.ID, &order.SessionID, &order.DailyOrderNumber, &order.VehicleDescription, &order.Status, &order.CreatedAt, &order.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan order: %w", err)
 		}
 		orders = append(orders, order)
@@ -155,18 +438,13 @@ func (r *PostgresRepository) GetOrders(ctx context.Context) ([]types.DBOrder, er
 }
 
 func (r *PostgresRepository) GetOrderByID(ctx context.Context, id int) (*types.DBOrder, error) {
-	// Include daily_order_number calculated using window function
 	query := `
-		SELECT id, vehicle_description, status, created_at, updated_at, daily_order_number
-		FROM (
-			SELECT id, vehicle_description, status, created_at, updated_at,
-				ROW_NUMBER() OVER (PARTITION BY DATE(created_at) ORDER BY id) as daily_order_number
-			FROM orders
-		) sub
+		SELECT id, session_id, daily_order_number, vehicle_description, status, created_at, updated_at
+		FROM orders
 		WHERE id = $1
 	`
 	var order types.DBOrder
-	if err := r.pool.QueryRow(ctx, query, id).Scan(&order.ID, &order.VehicleDescription, &order.Status, &order.CreatedAt, &order.UpdatedAt, &order.DailyOrderNumber); err != nil {
+	if err := r.pool.QueryRow(ctx, query, id).Scan(&order.ID, &order.SessionID, &order.DailyOrderNumber, &order.VehicleDescription, &order.Status, &order.CreatedAt, &order.UpdatedAt); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
@@ -196,8 +474,8 @@ func (r *PostgresRepository) CreateOrder(ctx context.Context, order *types.DBOrd
 	order.CreatedAt = time.Now()
 	order.UpdatedAt = order.CreatedAt
 
-	query := `INSERT INTO orders (vehicle_description, status, created_at, updated_at) VALUES ($1, $2, $3, $4) RETURNING id`
-	err := r.pool.QueryRow(ctx, query, order.VehicleDescription, order.Status, order.CreatedAt, order.UpdatedAt).Scan(&order.ID)
+	query := `INSERT INTO orders (session_id, daily_order_number, vehicle_description, status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
+	err := r.pool.QueryRow(ctx, query, order.SessionID, order.DailyOrderNumber, order.VehicleDescription, order.Status, order.CreatedAt, order.UpdatedAt).Scan(&order.ID)
 	if err != nil {
 		return fmt.Errorf("failed to create order: %w", err)
 	}
@@ -227,7 +505,7 @@ func (r *PostgresRepository) DeleteOrder(ctx context.Context, id int) error {
 // Order items
 
 func (r *PostgresRepository) GetOrderItems(ctx context.Context, orderID int) ([]types.DBOrderItem, error) {
-	query := `SELECT id, order_id, menu_item_id, quantity, created_at FROM order_items WHERE order_id = $1 ORDER BY created_at`
+	query := `SELECT id, order_id, menu_item_id, item_name, unit_price, quantity, created_at FROM order_items WHERE order_id = $1 ORDER BY created_at`
 	rows, err := r.pool.Query(ctx, query, orderID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get order items: %w", err)
@@ -237,8 +515,12 @@ func (r *PostgresRepository) GetOrderItems(ctx context.Context, orderID int) ([]
 	var items []types.DBOrderItem
 	for rows.Next() {
 		var item types.DBOrderItem
-		if err := rows.Scan(&item.ID, &item.OrderID, &item.MenuItemID, &item.Quantity, &item.CreatedAt); err != nil {
+		var menuItemID *string
+		if err := rows.Scan(&item.ID, &item.OrderID, &menuItemID, &item.ItemName, &item.UnitPrice, &item.Quantity, &item.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan order item: %w", err)
+		}
+		if menuItemID != nil {
+			item.MenuItemID = *menuItemID
 		}
 		items = append(items, item)
 	}
@@ -250,12 +532,14 @@ func (r *PostgresRepository) CreateOrderItem(ctx context.Context, item *types.DB
 	item.ID = uuid.New().String()
 	item.CreatedAt = time.Now()
 
-	query := `INSERT INTO order_items (id, order_id, menu_item_id, quantity, created_at) VALUES ($1, $2, $3, $4, $5)`
-	_, err := r.pool.Exec(ctx, query, item.ID, item.OrderID, item.MenuItemID, item.Quantity, item.CreatedAt)
+	query := `INSERT INTO order_items (id, order_id, menu_item_id, item_name, unit_price, quantity, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	_, err := r.pool.Exec(ctx, query, item.ID, item.OrderID, item.MenuItemID, item.ItemName, item.UnitPrice, item.Quantity, item.CreatedAt)
 	if err != nil {
 		logger.ErrorWithErr("Database error: failed to create order item", err,
 			"order_id", item.OrderID,
 			"menu_item_id", item.MenuItemID,
+			"item_name", item.ItemName,
+			"unit_price", item.UnitPrice,
 			"quantity", item.Quantity,
 		)
 		return fmt.Errorf("failed to create order item: %w", err)

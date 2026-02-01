@@ -7,6 +7,21 @@ import (
 	pb "github.com/jbohanon/fish-fry-orders-v2/proto"
 )
 
+// DBSession represents an event session in the database
+type DBSession struct {
+	ID              int        `json:"id"`
+	EventName       string     `json:"event_name"`
+	StartedAt       time.Time  `json:"started_at"`
+	ExpiresAt       time.Time  `json:"expires_at"`
+	ClosedAt        *time.Time `json:"closed_at,omitempty"`
+	Status          string     `json:"status"` // ACTIVE or CLOSED
+	FinalOrderCount *int       `json:"final_order_count,omitempty"`
+	FinalRevenue    *float64   `json:"final_revenue,omitempty"`
+	Notes           string     `json:"notes,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
 // DBMenuItem represents a menu item in the database
 type DBMenuItem struct {
 	ID           string    `json:"id"`
@@ -21,11 +36,12 @@ type DBMenuItem struct {
 // DBOrder represents an order in the database
 type DBOrder struct {
 	ID                 int       `json:"id"`
+	SessionID          int       `json:"session_id"`
+	DailyOrderNumber   int       `json:"daily_order_number"`
 	VehicleDescription string    `json:"vehicle_description"`
 	Status             string    `json:"status"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
-	DailyOrderNumber   int       `json:"daily_order_number"` // Calculated dynamically, not stored
 }
 
 // DBOrderItem represents an order item in the database
@@ -33,6 +49,8 @@ type DBOrderItem struct {
 	ID         string    `json:"id"`
 	OrderID    int       `json:"order_id"`
 	MenuItemID string    `json:"menu_item_id"`
+	ItemName   string    `json:"item_name"`   // Captured at order time
+	UnitPrice  float64   `json:"unit_price"`  // Captured at order time
 	Quantity   int32     `json:"quantity"`
 	CreatedAt  time.Time `json:"created_at"`
 }

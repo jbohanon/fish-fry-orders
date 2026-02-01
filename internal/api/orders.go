@@ -86,37 +86,82 @@ func (h *OrderHandler) CreateOrder(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one item is required")
 	}
 
-	// Create order
+	ctx := c.Request().Context()
+
+	// Get or create active session
+	session, err := h.repo.GetOrCreateActiveSession(ctx)
+	if err != nil {
+		logger.ErrorWithErr("Failed to get or create session", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get or create session")
+	}
+
+	// Check if session is expired
+	if time.Now().After(session.ExpiresAt) {
+		return echo.NewHTTPError(http.StatusConflict, "Session has expired. Please ask an admin to extend the session or start a new one.")
+	}
+
+	// Get next daily order number
+	dailyNum, err := h.repo.GetNextDailyOrderNumber(ctx, session.ID)
+	if err != nil {
+		logger.ErrorWithErr("Failed to get next daily order number", err, "session_id", session.ID)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get next order number")
+	}
+
+	// Create order with session reference
 	order := &types.DBOrder{
+		SessionID:          session.ID,
+		DailyOrderNumber:   dailyNum,
 		VehicleDescription: vehicleDesc,
 		Status:             "NEW",
 	}
 
-	if err := h.repo.CreateOrder(c.Request().Context(), order); err != nil {
+	if err := h.repo.CreateOrder(ctx, order); err != nil {
 		logger.ErrorWithErr("Failed to create order", err,
+			"session_id", session.ID,
+			"daily_order_number", dailyNum,
 			"vehicle_description", vehicleDesc,
 			"items_count", len(req.Items),
 		)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create order")
 	}
 
-	logger.Info("Order created successfully", "order_id", order.ID, "vehicle_description", vehicleDesc)
+	logger.Info("Order created successfully",
+		"order_id", order.ID,
+		"session_id", session.ID,
+		"daily_order_number", dailyNum,
+		"vehicle_description", vehicleDesc,
+	)
 
-	// Create order items
+	// Create order items with captured prices
 	for i, itemReq := range req.Items {
 		menuItemID := itemReq.MenuItemID
 		if menuItemID == "" {
 			menuItemID = itemReq.MenuItemId // Use camelCase if snake_case is empty
 		}
+
+		// Look up menu item to capture name and price
+		menuItem, err := h.repo.GetMenuItemByID(ctx, menuItemID)
+		if err != nil {
+			logger.ErrorWithErr("Failed to get menu item", err, "menu_item_id", menuItemID)
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get menu item")
+		}
+		if menuItem == nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "menu item not found: "+menuItemID)
+		}
+
 		orderItem := &types.DBOrderItem{
 			OrderID:    order.ID,
 			MenuItemID: menuItemID,
+			ItemName:   menuItem.Name,  // Capture at order time
+			UnitPrice:  menuItem.Price, // Capture at order time
 			Quantity:   itemReq.Quantity,
 		}
-		if err := h.repo.CreateOrderItem(c.Request().Context(), orderItem); err != nil {
+		if err := h.repo.CreateOrderItem(ctx, orderItem); err != nil {
 			logger.ErrorWithErr("Failed to create order item", err,
 				"order_id", order.ID,
 				"menu_item_id", menuItemID,
+				"item_name", menuItem.Name,
+				"unit_price", menuItem.Price,
 				"quantity", itemReq.Quantity,
 				"item_index", i,
 			)
@@ -125,17 +170,17 @@ func (h *OrderHandler) CreateOrder(c echo.Context) error {
 	}
 
 	// Fetch the complete order with items for response
-	createdOrder, err := h.repo.GetOrderByID(c.Request().Context(), order.ID)
+	createdOrder, err := h.repo.GetOrderByID(ctx, order.ID)
 	if err != nil || createdOrder == nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get created order")
 	}
-	
+
 	// Broadcast new order to WebSocket clients
-	h.BroadcastNewOrder(c.Request().Context(), createdOrder)
-	
+	h.BroadcastNewOrder(ctx, createdOrder)
+
 	// Broadcast stats update
-	h.BroadcastStatsUpdate(c.Request().Context())
-	
+	h.BroadcastStatsUpdate(ctx)
+
 	return h.getOrderResponse(c, order.ID)
 }
 
@@ -147,20 +192,9 @@ func (h *OrderHandler) GetOrders(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get orders")
 	}
 
-	// Get menu items for name/price lookup
-	menuItems, err := h.repo.GetMenuItems(c.Request().Context())
-	if err != nil {
-		logger.ErrorWithErr("Failed to get menu items", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get menu items")
-	}
-	menuItemMap := make(map[string]types.DBMenuItem)
-	for _, mi := range menuItems {
-		menuItemMap[mi.ID] = mi
-	}
-
 	responses := make([]OrderResponse, 0, len(orders))
 	for _, order := range orders {
-		// Get order items
+		// Get order items (now includes captured name and price)
 		items, err := h.repo.GetOrderItems(c.Request().Context(), order.ID)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get order items")
@@ -169,18 +203,14 @@ func (h *OrderHandler) GetOrders(c echo.Context) error {
 		var total float64
 		itemResponses := make([]OrderItemResponse, 0, len(items))
 		for _, item := range items {
-			var menuItemName string
-			var price float64
-			if mi, ok := menuItemMap[item.MenuItemID]; ok {
-				menuItemName = mi.Name
-				price = mi.Price
-			}
-			total += price * float64(item.Quantity)
+			// Use captured price and name from order time
+			total += item.UnitPrice * float64(item.Quantity)
 			itemResponses = append(itemResponses, OrderItemResponse{
 				ID:           item.ID,
 				MenuItemID:   item.MenuItemID,
-				MenuItemName: menuItemName,
-				Price:        price,
+				MenuItemId:   item.MenuItemID,
+				MenuItemName: item.ItemName,
+				Price:        item.UnitPrice,
 				Quantity:     item.Quantity,
 			})
 		}
@@ -221,40 +251,24 @@ func (h *OrderHandler) getOrderResponse(c echo.Context, orderID int) error {
 		return echo.NewHTTPError(http.StatusNotFound, "order not found")
 	}
 
-	// Get order items
+	// Get order items (now includes captured name and price)
 	items, err := h.repo.GetOrderItems(c.Request().Context(), orderID)
 	if err != nil {
 		logger.ErrorWithErr("Failed to get order items", err, "order_id", orderID)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get order items")
 	}
 
-	// Get menu items for name/price lookup
-	menuItems, err := h.repo.GetMenuItems(c.Request().Context())
-	if err != nil {
-		logger.ErrorWithErr("Failed to get menu items", err, "order_id", orderID)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get menu items")
-	}
-	menuItemMap := make(map[string]types.DBMenuItem)
-	for _, mi := range menuItems {
-		menuItemMap[mi.ID] = mi
-	}
-
 	var total float64
 	itemResponses := make([]OrderItemResponse, 0, len(items))
 	for _, item := range items {
-		var menuItemName string
-		var price float64
-		if mi, ok := menuItemMap[item.MenuItemID]; ok {
-			menuItemName = mi.Name
-			price = mi.Price
-		}
-		total += price * float64(item.Quantity)
+		// Use captured price and name from order time
+		total += item.UnitPrice * float64(item.Quantity)
 		itemResponses = append(itemResponses, OrderItemResponse{
 			ID:           item.ID,
 			MenuItemID:   item.MenuItemID,
 			MenuItemId:   item.MenuItemID, // Also set camelCase version
-			MenuItemName: menuItemName,
-			Price:        price,
+			MenuItemName: item.ItemName,
+			Price:        item.UnitPrice,
 			Quantity:     item.Quantity,
 		})
 	}
@@ -411,32 +425,53 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 		h.clientsLock.Unlock()
 	}()
 
-	// Get menu items for name/price lookup
-	menuItems, _ := h.repo.GetMenuItems(c.Request().Context())
-	menuItemMap := make(map[string]types.DBMenuItem)
-	for _, mi := range menuItems {
-		menuItemMap[mi.ID] = mi
+	ctx := c.Request().Context()
+
+	// Send current session info
+	session, _ := h.repo.GetActiveSession(ctx)
+	if session != nil {
+		orderCount, revenue, _ := h.repo.GetSessionStats(ctx, session.ID)
+		var closedAt *string
+		if session.ClosedAt != nil {
+			ca := session.ClosedAt.Format(time.RFC3339)
+			closedAt = &ca
+		}
+		sessionMsg := map[string]interface{}{
+			"type": "session_update",
+			"session": map[string]interface{}{
+				"id":                session.ID,
+				"eventName":         session.EventName,
+				"startedAt":         session.StartedAt.Format(time.RFC3339),
+				"expiresAt":         session.ExpiresAt.Format(time.RFC3339),
+				"closedAt":          closedAt,
+				"status":            session.Status,
+				"currentOrderCount": orderCount,
+				"currentRevenue":    revenue,
+			},
+		}
+		ws.WriteJSON(sessionMsg)
+	} else {
+		ws.WriteJSON(map[string]interface{}{
+			"type":   "session_update",
+			"active": false,
+		})
 	}
 
-	// Send initial orders
-	orders, err := h.repo.GetOrders(c.Request().Context())
+	// Send initial orders (uses captured prices now)
+	orders, err := h.repo.GetOrders(ctx)
 	if err == nil {
 		for _, order := range orders {
-			items, _ := h.repo.GetOrderItems(c.Request().Context(), order.ID)
+			items, _ := h.repo.GetOrderItems(ctx, order.ID)
 			itemResponses := make([]OrderItemResponse, 0, len(items))
+			var total float64
 			for _, item := range items {
-				var menuItemName string
-				var price float64
-				if mi, ok := menuItemMap[item.MenuItemID]; ok {
-					menuItemName = mi.Name
-					price = mi.Price
-				}
+				total += item.UnitPrice * float64(item.Quantity)
 				itemResponses = append(itemResponses, OrderItemResponse{
 					ID:           item.ID,
 					MenuItemID:   item.MenuItemID,
 					MenuItemId:   item.MenuItemID,
-					MenuItemName: menuItemName,
-					Price:        price,
+					MenuItemName: item.ItemName,
+					Price:        item.UnitPrice,
 					Quantity:     item.Quantity,
 				})
 			}
@@ -450,8 +485,9 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 					CustomerName:       order.VehicleDescription,
 					Status:             normalizeStatus(order.Status),
 					Items:              itemResponses,
-					CreatedAt:          order.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-					UpdatedAt:          order.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+					Total:              total,
+					CreatedAt:          order.CreatedAt.Format(time.RFC3339),
+					UpdatedAt:          order.UpdatedAt.Format(time.RFC3339),
 				},
 			}
 			if err := ws.WriteJSON(msg); err != nil {
@@ -461,7 +497,7 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 	}
 
 	// Send initial stats to this client
-	h.sendStatsToClient(c.Request().Context(), ws, menuItems, orders)
+	h.sendStatsToClient(ctx, ws, orders)
 
 	// Keep connection alive and handle incoming messages
 	for {
@@ -477,50 +513,34 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 
 // BroadcastNewOrder sends a new order notification to all connected WebSocket clients
 func (h *OrderHandler) BroadcastNewOrder(ctx context.Context, order *types.DBOrder) {
-	// Get menu items for name/price lookup
-	menuItems, _ := h.repo.GetMenuItems(ctx)
-	menuItemMap := make(map[string]types.DBMenuItem)
-	for _, mi := range menuItems {
-		menuItemMap[mi.ID] = mi
-	}
-
-	// Get items for this order
+	// Get items for this order (now includes captured name and price)
 	orderItems, _ := h.repo.GetOrderItems(ctx, order.ID)
 	itemResponses := make([]OrderItemResponse, 0, len(orderItems))
+	var total float64
 	for _, item := range orderItems {
-		var menuItemName string
-		var price float64
-		if mi, ok := menuItemMap[item.MenuItemID]; ok {
-			menuItemName = mi.Name
-			price = mi.Price
-		}
+		total += item.UnitPrice * float64(item.Quantity)
 		itemResponses = append(itemResponses, OrderItemResponse{
 			ID:           item.ID,
 			MenuItemID:   item.MenuItemID,
-			MenuItemId:   item.MenuItemID, // Also set camelCase version
-			MenuItemName: menuItemName,
-			Price:        price,
+			MenuItemId:   item.MenuItemID,
+			MenuItemName: item.ItemName,
+			Price:        item.UnitPrice,
 			Quantity:     item.Quantity,
 		})
-	}
-
-	// Fetch the order again to get DailyOrderNumber
-	orderWithDailyNum, err := h.repo.GetOrderByID(ctx, order.ID)
-	if err != nil || orderWithDailyNum == nil {
-		orderWithDailyNum = order // Fallback to original if fetch fails
 	}
 
 	msg := map[string]interface{}{
 		"type": "order_new",
 		"order": OrderResponse{
 			ID:                 order.ID,
-			DailyOrderNumber:   orderWithDailyNum.DailyOrderNumber,
+			DailyOrderNumber:   order.DailyOrderNumber,
 			VehicleDescription: order.VehicleDescription,
-			CustomerName:       order.VehicleDescription, // Alias for frontend
+			CustomerName:       order.VehicleDescription,
 			Status:             normalizeStatus(order.Status),
 			Items:              itemResponses,
-			CreatedAt:          order.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt:          order.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Total:              total,
+			CreatedAt:          order.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:          order.UpdatedAt.Format(time.RFC3339),
 		},
 	}
 
@@ -545,50 +565,34 @@ func (h *OrderHandler) BroadcastNewOrder(ctx context.Context, order *types.DBOrd
 
 // BroadcastOrderUpdate sends order updates to all connected WebSocket clients
 func (h *OrderHandler) BroadcastOrderUpdate(ctx context.Context, order *types.DBOrder) {
-	// Get menu items for name/price lookup
-	menuItems, _ := h.repo.GetMenuItems(ctx)
-	menuItemMap := make(map[string]types.DBMenuItem)
-	for _, mi := range menuItems {
-		menuItemMap[mi.ID] = mi
-	}
-
-	// Get items for this order
+	// Get items for this order (now includes captured name and price)
 	orderItems, _ := h.repo.GetOrderItems(ctx, order.ID)
 	itemResponses := make([]OrderItemResponse, 0, len(orderItems))
+	var total float64
 	for _, item := range orderItems {
-		var menuItemName string
-		var price float64
-		if mi, ok := menuItemMap[item.MenuItemID]; ok {
-			menuItemName = mi.Name
-			price = mi.Price
-		}
+		total += item.UnitPrice * float64(item.Quantity)
 		itemResponses = append(itemResponses, OrderItemResponse{
 			ID:           item.ID,
 			MenuItemID:   item.MenuItemID,
-			MenuItemId:   item.MenuItemID, // Also set camelCase version
-			MenuItemName: menuItemName,
-			Price:        price,
+			MenuItemId:   item.MenuItemID,
+			MenuItemName: item.ItemName,
+			Price:        item.UnitPrice,
 			Quantity:     item.Quantity,
 		})
-	}
-
-	// Fetch the order again to get DailyOrderNumber
-	orderWithDailyNum, err := h.repo.GetOrderByID(ctx, order.ID)
-	if err != nil || orderWithDailyNum == nil {
-		orderWithDailyNum = order // Fallback to original if fetch fails
 	}
 
 	msg := map[string]interface{}{
 		"type": "order_update",
 		"order": OrderResponse{
 			ID:                 order.ID,
-			DailyOrderNumber:   orderWithDailyNum.DailyOrderNumber,
+			DailyOrderNumber:   order.DailyOrderNumber,
 			VehicleDescription: order.VehicleDescription,
-			CustomerName:       order.VehicleDescription, // Alias for frontend
+			CustomerName:       order.VehicleDescription,
 			Status:             normalizeStatus(order.Status),
 			Items:              itemResponses,
-			CreatedAt:          order.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt:          order.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Total:              total,
+			CreatedAt:          order.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:          order.UpdatedAt.Format(time.RFC3339),
 		},
 	}
 
@@ -611,6 +615,89 @@ func (h *OrderHandler) BroadcastOrderUpdate(ctx context.Context, order *types.DB
 	h.clientsLock.Unlock()
 }
 
+// BroadcastSessionUpdate sends session updates to all connected WebSocket clients
+func (h *OrderHandler) BroadcastSessionUpdate(ctx context.Context, session *types.DBSession) {
+	orderCount, revenue, _ := h.repo.GetSessionStats(ctx, session.ID)
+	var closedAt *string
+	if session.ClosedAt != nil {
+		ca := session.ClosedAt.Format(time.RFC3339)
+		closedAt = &ca
+	}
+
+	msg := map[string]interface{}{
+		"type":   "session_update",
+		"active": true,
+		"session": map[string]interface{}{
+			"id":                session.ID,
+			"eventName":         session.EventName,
+			"startedAt":         session.StartedAt.Format(time.RFC3339),
+			"expiresAt":         session.ExpiresAt.Format(time.RFC3339),
+			"closedAt":          closedAt,
+			"status":            session.Status,
+			"currentOrderCount": orderCount,
+			"currentRevenue":    revenue,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	h.clientsLock.RLock()
+	clients := make([]*websocket.Conn, 0, len(h.clients))
+	for client := range h.clients {
+		clients = append(clients, client)
+	}
+	h.clientsLock.RUnlock()
+
+	h.clientsLock.Lock()
+	for _, client := range clients {
+		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
+			delete(h.clients, client)
+		}
+	}
+	h.clientsLock.Unlock()
+}
+
+// BroadcastSessionClosed sends session closed notification to all connected WebSocket clients
+func (h *OrderHandler) BroadcastSessionClosed(ctx context.Context, session *types.DBSession) {
+	var closedAt *string
+	if session.ClosedAt != nil {
+		ca := session.ClosedAt.Format(time.RFC3339)
+		closedAt = &ca
+	}
+
+	msg := map[string]interface{}{
+		"type":   "session_closed",
+		"active": false,
+		"session": map[string]interface{}{
+			"id":              session.ID,
+			"eventName":       session.EventName,
+			"startedAt":       session.StartedAt.Format(time.RFC3339),
+			"expiresAt":       session.ExpiresAt.Format(time.RFC3339),
+			"closedAt":        closedAt,
+			"status":          session.Status,
+			"finalOrderCount": session.FinalOrderCount,
+			"finalRevenue":    session.FinalRevenue,
+		},
+	}
+
+	data, _ := json.Marshal(msg)
+
+	h.clientsLock.RLock()
+	clients := make([]*websocket.Conn, 0, len(h.clients))
+	for client := range h.clients {
+		clients = append(clients, client)
+	}
+	h.clientsLock.RUnlock()
+
+	h.clientsLock.Lock()
+	for _, client := range clients {
+		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
+			delete(h.clients, client)
+		}
+	}
+	h.clientsLock.Unlock()
+}
+
 // StatsResponse represents statistics in the API response
 type StatsResponse struct {
 	TotalOrders int     `json:"totalOrders"`
@@ -619,44 +706,25 @@ type StatsResponse struct {
 }
 
 // sendStatsToClient sends current stats to a single WebSocket client
-func (h *OrderHandler) sendStatsToClient(ctx context.Context, ws *websocket.Conn, menuItems []types.DBMenuItem, orders []types.DBOrder) {
-	// Create a map of menu item IDs to prices for quick lookup
-	menuItemPrices := make(map[string]float64)
-	for _, item := range menuItems {
-		menuItemPrices[item.ID] = item.Price
-	}
-
-	// Calculate orders today
-	today := time.Now()
-	startOfToday := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
-	ordersToday := 0
-	for _, order := range orders {
-		if order.CreatedAt.After(startOfToday) || order.CreatedAt.Equal(startOfToday) {
-			ordersToday++
-		}
-	}
-
-	// Calculate total revenue
+func (h *OrderHandler) sendStatsToClient(ctx context.Context, ws *websocket.Conn, orders []types.DBOrder) {
+	// Calculate total revenue from captured prices in order items
 	totalRevenue := 0.0
 	for _, order := range orders {
-		// Get order items for this order
 		orderItems, err := h.repo.GetOrderItems(ctx, order.ID)
 		if err != nil {
-			continue // Skip orders with errors loading items
+			continue
 		}
 		for _, orderItem := range orderItems {
-			if price, ok := menuItemPrices[orderItem.MenuItemID]; ok {
-				totalRevenue += price * float64(orderItem.Quantity)
-			}
+			totalRevenue += orderItem.UnitPrice * float64(orderItem.Quantity)
 		}
 	}
 
-	// Create and send stats message
+	// For session-based stats, ordersToday = total orders in current session
 	msg := map[string]interface{}{
 		"type": "stats_update",
 		"stats": StatsResponse{
 			TotalOrders: len(orders),
-			OrdersToday: ordersToday,
+			OrdersToday: len(orders), // In session context, these are today's orders
 			Revenue:     totalRevenue,
 		},
 	}
@@ -665,57 +733,31 @@ func (h *OrderHandler) sendStatsToClient(ctx context.Context, ws *websocket.Conn
 
 // BroadcastStatsUpdate calculates and broadcasts statistics updates to all connected WebSocket clients
 func (h *OrderHandler) BroadcastStatsUpdate(ctx context.Context) {
-	// Load all orders
+	// Load orders for current active session
 	orders, err := h.repo.GetOrders(ctx)
 	if err != nil {
 		logger.ErrorWithErr("Failed to load orders for stats", err)
 		return
 	}
 
-	// Load all menu items for price lookup
-	menuItems, err := h.repo.GetMenuItems(ctx)
-	if err != nil {
-		logger.ErrorWithErr("Failed to load menu items for stats", err)
-		return
-	}
-
-	// Create a map of menu item IDs to prices for quick lookup
-	menuItemPrices := make(map[string]float64)
-	for _, item := range menuItems {
-		menuItemPrices[item.ID] = item.Price
-	}
-
-	// Calculate orders today
-	today := time.Now()
-	startOfToday := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
-	ordersToday := 0
-	for _, order := range orders {
-		if order.CreatedAt.After(startOfToday) || order.CreatedAt.Equal(startOfToday) {
-			ordersToday++
-		}
-	}
-
-	// Calculate total revenue
+	// Calculate total revenue from captured prices in order items
 	totalRevenue := 0.0
 	for _, order := range orders {
-		// Get order items for this order
 		orderItems, err := h.repo.GetOrderItems(ctx, order.ID)
 		if err != nil {
-			continue // Skip orders with errors loading items
+			continue
 		}
 		for _, orderItem := range orderItems {
-			if price, ok := menuItemPrices[orderItem.MenuItemID]; ok {
-				totalRevenue += price * float64(orderItem.Quantity)
-			}
+			totalRevenue += orderItem.UnitPrice * float64(orderItem.Quantity)
 		}
 	}
 
-	// Create stats message
+	// Create stats message (in session context, ordersToday = session orders)
 	msg := map[string]interface{}{
 		"type": "stats_update",
 		"stats": StatsResponse{
 			TotalOrders: len(orders),
-			OrdersToday: ordersToday,
+			OrdersToday: len(orders),
 			Revenue:     totalRevenue,
 		},
 	}

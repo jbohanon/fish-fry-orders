@@ -3,15 +3,24 @@ import { Layout } from '../components/Layout';
 import { useOrders } from '../hooks/useOrders';
 import { getMenuItems, createMenuItem, deleteMenuItem, updateMenuItemsOrder, updateMenuItem } from '../api/menu';
 import { purgeOrders } from '../api/orders';
+import { updateSession, closeSession, createSession } from '../api/sessions';
 import type { MenuItem } from '../types';
 
 export function AdminPage() {
-  const { orders, stats } = useOrders();
+  const { orders, stats, session, hasActiveSession, reloadSession } = useOrders();
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Session modals
+  const [showExtendModal, setShowExtendModal] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [extendHours, setExtendHours] = useState<number | 'custom'>(1);
+  const [customExpiry, setCustomExpiry] = useState('');
+  const [isSessionLoading, setIsSessionLoading] = useState(false);
+
   // Collapsible sections
+  const [sessionExpanded, setSessionExpanded] = useState(true);
   const [menuExpanded, setMenuExpanded] = useState(true);
   const [statsExpanded, setStatsExpanded] = useState(true);
   const [ordersByItemExpanded, setOrdersByItemExpanded] = useState(false);
@@ -23,6 +32,80 @@ export function AdminPage() {
   // New menu item form
   const [newItemName, setNewItemName] = useState('');
   const [newItemPrice, setNewItemPrice] = useState('');
+
+  // Session handlers
+  const handleExtendSession = async () => {
+    if (!session) return;
+    setIsSessionLoading(true);
+    try {
+      let newExpiry: Date;
+      if (extendHours === 'custom') {
+        if (!customExpiry) {
+          setError('Please select a date and time');
+          setIsSessionLoading(false);
+          return;
+        }
+        newExpiry = new Date(customExpiry);
+      } else {
+        const currentExpiry = new Date(session.expiresAt);
+        newExpiry = new Date(currentExpiry.getTime() + extendHours * 60 * 60 * 1000);
+      }
+      await updateSession(session.id, { expiresAt: newExpiry.toISOString() });
+      await reloadSession();
+      setShowExtendModal(false);
+      setExtendHours(1);
+      setCustomExpiry('');
+    } catch (e) {
+      setError('Failed to extend session');
+    } finally {
+      setIsSessionLoading(false);
+    }
+  };
+
+  const handleCloseSession = async () => {
+    if (!session) return;
+    setIsSessionLoading(true);
+    try {
+      await closeSession(session.id);
+      await reloadSession();
+      setShowCloseConfirm(false);
+    } catch (e) {
+      setError('Failed to close session');
+    } finally {
+      setIsSessionLoading(false);
+    }
+  };
+
+  const handleStartNewSession = async () => {
+    setIsSessionLoading(true);
+    try {
+      // Calculate midnight local time
+      const now = new Date();
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+      await createSession({ expiresAt: midnight.toISOString() });
+      await reloadSession();
+    } catch (e) {
+      setError('Failed to start new session');
+    } finally {
+      setIsSessionLoading(false);
+    }
+  };
+
+  const formatTimeRemaining = (expiresAt: string) => {
+    const now = new Date();
+    const expiry = new Date(expiresAt);
+    const diff = expiry.getTime() - now.getTime();
+    
+    if (diff <= 0) return 'Expired';
+    
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m remaining`;
+    }
+    return `${minutes}m remaining`;
+  };
 
   // Edit menu item state
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -206,6 +289,194 @@ export function AdminPage() {
 
         {error && (
           <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">{error}</div>
+        )}
+
+        {/* Session Status Section */}
+        <div className="bg-white rounded-xl shadow-md overflow-hidden">
+          <div
+            className="flex justify-between items-center p-6 cursor-pointer hover:bg-slate-50 transition-colors"
+            onClick={() => setSessionExpanded(!sessionExpanded)}
+          >
+            <h3 className="text-xl font-semibold text-slate-800">Current Session</h3>
+            <button className="text-slate-500 text-xl">{sessionExpanded ? '▼' : '▶'}</button>
+          </div>
+          {sessionExpanded && (
+            <div className="px-6 pb-6">
+              {hasActiveSession && session ? (
+                <div className="space-y-4">
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-semibold text-emerald-800 text-lg">{session.eventName}</h4>
+                        <p className="text-sm text-emerald-600 mt-1">
+                          Started: {new Date(session.startedAt).toLocaleString()}
+                        </p>
+                        <p className="text-sm text-emerald-600">
+                          Expires: {new Date(session.expiresAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-emerald-100 text-emerald-800">
+                          ACTIVE
+                        </span>
+                        <p className="text-sm text-emerald-600 mt-2 font-medium">
+                          {formatTimeRemaining(session.expiresAt)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-4">
+                      <div className="bg-white rounded-lg p-3 text-center">
+                        <p className="text-2xl font-bold text-emerald-600">{session.currentOrderCount || 0}</p>
+                        <p className="text-xs text-slate-500">Orders</p>
+                      </div>
+                      <div className="bg-white rounded-lg p-3 text-center">
+                        <p className="text-2xl font-bold text-emerald-600">${(session.currentRevenue || 0).toFixed(2)}</p>
+                        <p className="text-xs text-slate-500">Revenue</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setShowExtendModal(true)}
+                      disabled={isSessionLoading}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-all disabled:opacity-50"
+                    >
+                      Extend Session
+                    </button>
+                    <button
+                      onClick={() => setShowCloseConfirm(true)}
+                      disabled={isSessionLoading}
+                      className="px-4 py-2 bg-amber-500 text-white rounded-md font-medium hover:bg-amber-600 transition-all disabled:opacity-50"
+                    >
+                      Close Session
+                    </button>
+                    <a
+                      href="/sessions"
+                      className="px-4 py-2 bg-slate-200 text-slate-700 rounded-md font-medium hover:bg-slate-300 transition-all"
+                    >
+                      View History
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center">
+                    <p className="text-slate-600 mb-2">No active session</p>
+                    <p className="text-sm text-slate-500">
+                      Create an order to auto-start a new session, or start one manually.
+                    </p>
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleStartNewSession}
+                      disabled={isSessionLoading}
+                      className="px-4 py-2 bg-emerald-600 text-white rounded-md font-medium hover:bg-emerald-700 transition-all disabled:opacity-50"
+                    >
+                      Start New Session
+                    </button>
+                    <a
+                      href="/sessions"
+                      className="px-4 py-2 bg-slate-200 text-slate-700 rounded-md font-medium hover:bg-slate-300 transition-all"
+                    >
+                      View History
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Extend Session Modal */}
+        {showExtendModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+              <h3 className="text-xl font-semibold text-slate-800 mb-4">Extend Session</h3>
+              <p className="text-slate-600 mb-4">
+                Current expiry: {session && new Date(session.expiresAt).toLocaleString()}
+              </p>
+              <div className="mb-4">
+                <label className="block text-sm text-slate-600 mb-2">Extend by:</label>
+                <select
+                  value={extendHours}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setExtendHours(val === 'custom' ? 'custom' : Number(val));
+                  }}
+                  className="w-full p-2 border border-slate-300 rounded-md"
+                >
+                  <option value={1}>1 hour</option>
+                  <option value={2}>2 hours</option>
+                  <option value={3}>3 hours</option>
+                  <option value={4}>4 hours</option>
+                  <option value="custom">Other (pick date/time)</option>
+                </select>
+              </div>
+              {extendHours === 'custom' && (
+                <div className="mb-4">
+                  <label className="block text-sm text-slate-600 mb-2">New expiry date/time:</label>
+                  <input
+                    type="datetime-local"
+                    value={customExpiry}
+                    onChange={(e) => setCustomExpiry(e.target.value)}
+                    className="w-full p-2 border border-slate-300 rounded-md"
+                    min={new Date().toISOString().slice(0, 16)}
+                  />
+                </div>
+              )}
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => {
+                    setShowExtendModal(false);
+                    setExtendHours(1);
+                    setCustomExpiry('');
+                  }}
+                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-md font-medium hover:bg-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleExtendSession}
+                  disabled={isSessionLoading || (extendHours === 'custom' && !customExpiry)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {isSessionLoading ? 'Extending...' : 'Extend'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Close Session Confirmation Modal */}
+        {showCloseConfirm && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+              <h3 className="text-xl font-semibold text-slate-800 mb-4">Close Session?</h3>
+              <p className="text-slate-600 mb-4">
+                This will:
+              </p>
+              <ul className="list-disc list-inside text-slate-600 mb-4 space-y-1">
+                <li>Mark all incomplete orders as completed</li>
+                <li>Snapshot final stats for this session</li>
+                <li>Prevent new orders until a new session starts</li>
+              </ul>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setShowCloseConfirm(false)}
+                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-md font-medium hover:bg-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCloseSession}
+                  disabled={isSessionLoading}
+                  className="px-4 py-2 bg-amber-500 text-white rounded-md font-medium hover:bg-amber-600 disabled:opacity-50"
+                >
+                  {isSessionLoading ? 'Closing...' : 'Close Session'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Statistics Section */}

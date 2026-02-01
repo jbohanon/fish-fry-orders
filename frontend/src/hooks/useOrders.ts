@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getOrders, updateOrderStatus as apiUpdateStatus } from '../api/orders';
+import { getCurrentSession } from '../api/sessions';
 import { useOrdersWebSocket } from './useWebSocket';
-import type { Order, OrderStatus, Stats, WebSocketMessage } from '../types';
+import type { Order, OrderStatus, Stats, Session, WebSocketMessage } from '../types';
 
 export function useOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [hasActiveSession, setHasActiveSession] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,8 +26,8 @@ export function useOrders() {
       if (aPriority !== bPriority) {
         return aPriority - bPriority;
       }
-      // Within same status, sort by ID ascending
-      return a.id - b.id;
+      // Within same status, sort by daily order number ascending
+      return (a.dailyOrderNumber || a.id) - (b.dailyOrderNumber || b.id);
     });
   }, []);
 
@@ -41,6 +44,17 @@ export function useOrders() {
     }
   }, [sortOrders]);
 
+  const loadSession = useCallback(async () => {
+    try {
+      const response = await getCurrentSession();
+      setHasActiveSession(response.active);
+      setSession(response.session || null);
+    } catch (e) {
+      // Session fetch failure is not critical
+      console.error('Failed to load session:', e);
+    }
+  }, []);
+
   const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
     if (message.type === 'order_new' && message.order) {
       setOrders((prev) => sortOrders([...prev, message.order!]));
@@ -50,6 +64,18 @@ export function useOrders() {
       );
     } else if (message.type === 'stats_update' && message.stats) {
       setStats(message.stats);
+    } else if (message.type === 'session_update') {
+      setHasActiveSession(message.active ?? true);
+      if (message.session) {
+        setSession(message.session);
+      }
+    } else if (message.type === 'session_closed') {
+      setHasActiveSession(false);
+      if (message.session) {
+        setSession(message.session);
+      }
+      // Clear orders when session closes (they belong to the old session)
+      setOrders([]);
     }
   }, [sortOrders]);
 
@@ -57,7 +83,8 @@ export function useOrders() {
 
   useEffect(() => {
     loadOrders();
-  }, [loadOrders]);
+    loadSession();
+  }, [loadOrders, loadSession]);
 
   const updateOrderStatus = useCallback(async (id: number, status: OrderStatus) => {
     const updatedOrder = await apiUpdateStatus(id, { status });
@@ -70,9 +97,12 @@ export function useOrders() {
   return {
     orders,
     stats,
+    session,
+    hasActiveSession,
     isLoading,
     error,
     updateOrderStatus,
     reload: loadOrders,
+    reloadSession: loadSession,
   };
 }

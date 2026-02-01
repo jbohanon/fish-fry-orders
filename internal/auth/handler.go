@@ -32,7 +32,7 @@ func (s *Service) HandleLogin(c echo.Context) error {
 
 func (s *Service) HandleLogout(c echo.Context) error {
 	s.Logout(c.Response())
-	return c.Redirect(http.StatusFound, "/auth")
+	return c.JSON(http.StatusOK, map[string]string{"status": "logged out"})
 }
 
 func (s *Service) HandleCheck(c echo.Context) error {
