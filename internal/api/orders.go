@@ -51,6 +51,7 @@ type CreateOrderItemRequest struct {
 // OrderResponse represents an order in the API response
 type OrderResponse struct {
 	ID                 int                 `json:"id"`
+	DailyOrderNumber   int                 `json:"dailyOrderNumber"`
 	VehicleDescription string              `json:"vehicle_description"`
 	CustomerName       string              `json:"customerName"` // Alias for vehicle_description for frontend
 	Status             string              `json:"status"`
@@ -189,6 +190,7 @@ func (h *OrderHandler) GetOrders(c echo.Context) error {
 
 		responses = append(responses, OrderResponse{
 			ID:                 order.ID,
+			DailyOrderNumber:   order.DailyOrderNumber,
 			VehicleDescription: order.VehicleDescription,
 			CustomerName:       order.VehicleDescription, // Alias for frontend
 			Status:             normalizeStatus(order.Status),
@@ -262,6 +264,7 @@ func (h *OrderHandler) getOrderResponse(c echo.Context, orderID int) error {
 
 	return c.JSON(http.StatusOK, OrderResponse{
 		ID:                 order.ID,
+		DailyOrderNumber:   order.DailyOrderNumber,
 		VehicleDescription: order.VehicleDescription,
 		CustomerName:       order.VehicleDescription, // Alias for frontend
 		Status:             normalizeStatus(order.Status),
@@ -445,6 +448,7 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 				"type": "order_update",
 				"order": OrderResponse{
 					ID:                 order.ID,
+					DailyOrderNumber:   order.DailyOrderNumber,
 					VehicleDescription: order.VehicleDescription,
 					CustomerName:       order.VehicleDescription,
 					Status:             normalizeStatus(order.Status),
@@ -458,6 +462,9 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 			}
 		}
 	}
+
+	// Send initial stats to this client
+	h.sendStatsToClient(c.Request().Context(), ws, menuItems, orders)
 
 	// Keep connection alive and handle incoming messages
 	for {
@@ -500,10 +507,17 @@ func (h *OrderHandler) BroadcastNewOrder(ctx context.Context, order *types.DBOrd
 		})
 	}
 
+	// Fetch the order again to get DailyOrderNumber
+	orderWithDailyNum, err := h.repo.GetOrderByID(ctx, order.ID)
+	if err != nil || orderWithDailyNum == nil {
+		orderWithDailyNum = order // Fallback to original if fetch fails
+	}
+
 	msg := map[string]interface{}{
 		"type": "order_new",
 		"order": OrderResponse{
 			ID:                 order.ID,
+			DailyOrderNumber:   orderWithDailyNum.DailyOrderNumber,
 			VehicleDescription: order.VehicleDescription,
 			CustomerName:       order.VehicleDescription, // Alias for frontend
 			Status:             normalizeStatus(order.Status),
@@ -561,10 +575,17 @@ func (h *OrderHandler) BroadcastOrderUpdate(ctx context.Context, order *types.DB
 		})
 	}
 
+	// Fetch the order again to get DailyOrderNumber
+	orderWithDailyNum, err := h.repo.GetOrderByID(ctx, order.ID)
+	if err != nil || orderWithDailyNum == nil {
+		orderWithDailyNum = order // Fallback to original if fetch fails
+	}
+
 	msg := map[string]interface{}{
 		"type": "order_update",
 		"order": OrderResponse{
 			ID:                 order.ID,
+			DailyOrderNumber:   orderWithDailyNum.DailyOrderNumber,
 			VehicleDescription: order.VehicleDescription,
 			CustomerName:       order.VehicleDescription, // Alias for frontend
 			Status:             normalizeStatus(order.Status),
@@ -598,6 +619,51 @@ type StatsResponse struct {
 	TotalOrders int     `json:"totalOrders"`
 	OrdersToday int     `json:"ordersToday"`
 	Revenue     float64 `json:"revenue"`
+}
+
+// sendStatsToClient sends current stats to a single WebSocket client
+func (h *OrderHandler) sendStatsToClient(ctx context.Context, ws *websocket.Conn, menuItems []types.DBMenuItem, orders []types.DBOrder) {
+	// Create a map of menu item IDs to prices for quick lookup
+	menuItemPrices := make(map[string]float64)
+	for _, item := range menuItems {
+		menuItemPrices[item.ID] = item.Price
+	}
+
+	// Calculate orders today
+	today := time.Now()
+	startOfToday := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
+	ordersToday := 0
+	for _, order := range orders {
+		if order.CreatedAt.After(startOfToday) || order.CreatedAt.Equal(startOfToday) {
+			ordersToday++
+		}
+	}
+
+	// Calculate total revenue
+	totalRevenue := 0.0
+	for _, order := range orders {
+		// Get order items for this order
+		orderItems, err := h.repo.GetOrderItems(ctx, order.ID)
+		if err != nil {
+			continue // Skip orders with errors loading items
+		}
+		for _, orderItem := range orderItems {
+			if price, ok := menuItemPrices[orderItem.MenuItemID]; ok {
+				totalRevenue += price * float64(orderItem.Quantity)
+			}
+		}
+	}
+
+	// Create and send stats message
+	msg := map[string]interface{}{
+		"type": "stats_update",
+		"stats": StatsResponse{
+			TotalOrders: len(orders),
+			OrdersToday: ordersToday,
+			Revenue:     totalRevenue,
+		},
+	}
+	ws.WriteJSON(msg)
 }
 
 // BroadcastStatsUpdate calculates and broadcasts statistics updates to all connected WebSocket clients

@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* Custom styles from the original app */
+:root {
+  --primary-color: #2563eb;
+  --primary-dark: #1e40af;
+  --secondary-color: #64748b;
+  --success-color: #10b981;
+  --warning-color: #f59e0b;
+  --error-color: #ef4444;
+}
+
+/* Status badge animations */
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 0 0 0 rgba(37, 99, 235, 0.7);
+  }
+  50% {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 0 0 10px rgba(37, 99, 235, 0);
+  }
+}
+
+.animate-pulse-order {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* Toast notification animation */
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}

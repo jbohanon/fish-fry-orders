@@ -122,8 +122,10 @@ func (r *PostgresRepository) UpdateMenuItemsOrder(ctx context.Context, itemOrder
 
 func (r *PostgresRepository) GetOrders(ctx context.Context) ([]types.DBOrder, error) {
 	// Sort by: status priority (IN_PROGRESS first, then NEW, then COMPLETED), then by ID ascending
+	// Include daily_order_number calculated using window function
 	query := `
-		SELECT id, vehicle_description, status, created_at, updated_at 
+		SELECT id, vehicle_description, status, created_at, updated_at,
+			ROW_NUMBER() OVER (PARTITION BY DATE(created_at) ORDER BY id) as daily_order_number
 		FROM orders 
 		ORDER BY 
 			CASE status 
@@ -143,7 +145,7 @@ func (r *PostgresRepository) GetOrders(ctx context.Context) ([]types.DBOrder, er
 	var orders []types.DBOrder
 	for rows.Next() {
 		var order types.DBOrder
-		if err := rows.Scan(&order.ID, &order.VehicleDescription, &order.Status, &order.CreatedAt, &order.UpdatedAt); err != nil {
+		if err := rows.Scan(&order.ID, &order.VehicleDescription, &order.Status, &order.CreatedAt, &order.UpdatedAt, &order.DailyOrderNumber); err != nil {
 			return nil, fmt.Errorf("failed to scan order: %w", err)
 		}
 		orders = append(orders, order)
@@ -153,9 +155,18 @@ func (r *PostgresRepository) GetOrders(ctx context.Context) ([]types.DBOrder, er
 }
 
 func (r *PostgresRepository) GetOrderByID(ctx context.Context, id int) (*types.DBOrder, error) {
-	query := `SELECT id, vehicle_description, status, created_at, updated_at FROM orders WHERE id = $1`
+	// Include daily_order_number calculated using window function
+	query := `
+		SELECT id, vehicle_description, status, created_at, updated_at, daily_order_number
+		FROM (
+			SELECT id, vehicle_description, status, created_at, updated_at,
+				ROW_NUMBER() OVER (PARTITION BY DATE(created_at) ORDER BY id) as daily_order_number
+			FROM orders
+		) sub
+		WHERE id = $1
+	`
 	var order types.DBOrder
-	if err := r.pool.QueryRow(ctx, query, id).Scan(&order.ID, &order.VehicleDescription, &order.Status, &order.CreatedAt, &order.UpdatedAt); err != nil {
+	if err := r.pool.QueryRow(ctx, query, id).Scan(&order.ID, &order.VehicleDescription, &order.Status, &order.CreatedAt, &order.UpdatedAt, &order.DailyOrderNumber); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}

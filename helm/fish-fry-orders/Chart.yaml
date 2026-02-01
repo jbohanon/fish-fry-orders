@@ -1,0 +1,6 @@
+apiVersion: v2
+name: fish-fry-orders
+description: A Helm chart for Fish Fry Orders application with separate frontend and backend
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

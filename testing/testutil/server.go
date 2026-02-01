@@ -3,12 +3,10 @@ package testutil
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 
 	"github.com/jbohanon/fish-fry-orders-v2/internal/api"
 	"github.com/jbohanon/fish-fry-orders-v2/internal/auth"
 	"github.com/jbohanon/fish-fry-orders-v2/internal/database"
-	"github.com/jbohanon/fish-fry-orders-v2/internal/ui"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -37,14 +35,6 @@ func NewTestServer(repo database.Repository) *TestServer {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
-
-	// Get template directory
-	templateDir := filepath.Join("ui", "templates")
-	templateService, err := ui.NewTemplateService(templateDir)
-	if err != nil {
-		// If templates don't exist, that's okay for API tests
-		_ = templateService
-	}
 
 	// Public routes
 	authGroup := e.Group("/api/auth")

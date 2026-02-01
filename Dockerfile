@@ -16,9 +16,8 @@ RUN go mod download
 # Copy the rest of the application
 COPY . .
 
-# Build the server binary with build timestamp
+# Build the server binary
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
-    -ldflags "-X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S_UTC')" \
     -o server cmd/server/main.go
 
 # Runtime stage
@@ -31,9 +30,6 @@ WORKDIR /app
 
 # Copy the binary from builder
 COPY --from=builder /app/server .
-
-# Copy UI templates and static files
-COPY --from=builder /app/ui ./ui
 
 # Copy default config (can be overridden via ConfigMap mount)
 COPY --from=builder /app/config.yaml .

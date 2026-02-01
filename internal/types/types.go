@@ -25,6 +25,7 @@ type DBOrder struct {
 	Status             string    `json:"status"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+	DailyOrderNumber   int       `json:"daily_order_number"` // Calculated dynamically, not stored
 }
 
 // DBOrderItem represents an order item in the database
