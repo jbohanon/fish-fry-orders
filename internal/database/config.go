@@ -16,6 +16,7 @@ import (
 
 // Config holds the database configuration
 type Config struct {
+	ctx      context.Context
 	Host     string
 	Port     string
 	User     string
@@ -27,12 +28,13 @@ type Config struct {
 // NewConfig creates a new database configuration from environment variables
 func NewConfig() *Config {
 	return &Config{
-		Host:     getEnvOrDefault("DB_HOST", "localhost"),
-		Port:     getEnvOrDefault("DB_PORT", "5432"),
-		User:     getEnvOrDefault("DB_USER", "postgres"),
-		Password: getEnvOrDefault("DB_PASSWORD", "postgres"),
-		DBName:   getEnvOrDefault("DB_NAME", "fish_fry_orders"),
-		SSLMode:  getEnvOrDefault("DB_SSL_MODE", "disable"),
+		Host:     getEnvOrPanic("DB_HOST", "localhost"),
+		Port:     getEnvOrPanic("DB_PORT", "5432"),
+		User:     getEnvOrPanic("DB_USER", "postgres"),
+		Password: getEnvOrPanic("DB_PASSWORD", "postgres"),
+		DBName:   getEnvOrPanic("DB_NAME", "fish_fry_orders"),
+		SSLMode:  getEnvOrPanic("DB_SSL_MODE", "disable"),
+		ctx:      context.Background(),
 	}
 }
 
@@ -53,7 +55,10 @@ func (c *Config) Connect() (*pgx.Conn, error) {
 
 // Context returns a context for database operations
 func (c *Config) Context() context.Context {
-	return context.Background()
+	if c.ctx == nil {
+		c.ctx = context.Background()
+	}
+	return c.ctx
 }
 
 // Migrate runs database migrations with auto-discovery
@@ -151,51 +156,21 @@ func (c *Config) tableExists(ctx context.Context, db *sql.DB, tableName string) 
 	return err == nil && exists
 }
 
-// columnExists checks if a column exists in a table
-func (c *Config) columnExists(ctx context.Context, db *sql.DB, tableName, columnName string) bool {
-	var exists bool
-	err := db.QueryRowContext(ctx,
-		"SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)",
-		tableName, columnName,
-	).Scan(&exists)
-	return err == nil && exists
-}
-
 // bootstrapMigrationState detects existing schema and marks migrations as applied
-// This handles the transition from the old migration system to the new one
+// This handles databases that existed before the schema_migrations table
 func (c *Config) bootstrapMigrationState(ctx context.Context, db *sql.DB, migrations []string) error {
-	// Check what already exists to determine which migrations were previously applied
+	// Check if the schema already exists (sessions table is a good indicator of full schema)
+	if !c.tableExists(ctx, db, "sessions") {
+		// Fresh database, no bootstrapping needed
+		return nil
+	}
+
+	// Schema exists, mark all current migrations as applied
 	for _, migration := range migrations {
-		alreadyApplied := false
-
-		switch {
-		case strings.Contains(migration, "000001_init_schema"):
-			// Check if core tables exist
-			alreadyApplied = c.tableExists(ctx, db, "menu_items") &&
-				c.tableExists(ctx, db, "orders") &&
-				c.tableExists(ctx, db, "order_items")
-
-		case strings.Contains(migration, "000002_optional_vehicle"):
-			// This migration made vehicle_description optional - check if orders table exists
-			// (the column was already there, just made nullable)
-			alreadyApplied = c.tableExists(ctx, db, "orders")
-
-		case strings.Contains(migration, "000003_sessions"):
-			// Check if sessions table exists
-			alreadyApplied = c.tableExists(ctx, db, "sessions")
-
-		default:
-			// For unknown migrations, check if it looks like it's been applied
-			// by checking if running it would fail (conservative approach: don't mark as applied)
-			alreadyApplied = false
+		if err := c.recordMigration(ctx, db, migration); err != nil {
+			return fmt.Errorf("failed to record bootstrapped migration %s: %w", migration, err)
 		}
-
-		if alreadyApplied {
-			if err := c.recordMigration(ctx, db, migration); err != nil {
-				return fmt.Errorf("failed to record bootstrapped migration %s: %w", migration, err)
-			}
-			fmt.Printf("Bootstrapped migration (already applied): %s\n", migration)
-		}
+		fmt.Printf("Bootstrapped migration (already applied): %s\n", migration)
 	}
 
 	return nil
@@ -256,9 +231,9 @@ func discoverMigrations(migrationsPath string) ([]string, error) {
 }
 
 // getEnvOrDefault returns the value of an environment variable or a default value
-func getEnvOrDefault(key, defaultValue string) string {
+func getEnvOrPanic(key, errMsg string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
-	return defaultValue
+	panic(errMsg)
 }

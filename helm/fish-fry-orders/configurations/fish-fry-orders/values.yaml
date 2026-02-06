@@ -40,6 +40,12 @@ frontend:
     requests:
       cpu: 50m
       memory: 64Mi
+  # Environment banner (disabled for production)
+  banner:
+    enabled: false
+    message: ""
+    type: info
+  version: "v0.0.0"
 
 # Database configuration - uses secretRef to mount full config
 database:

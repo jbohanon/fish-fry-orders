@@ -57,3 +57,11 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
+          volumeMounts:
+            - name: frontend-config
+              mountPath: /usr/share/nginx/html/config.js
+              subPath: config.js
+      volumes:
+        - name: frontend-config
+          configMap:
+            name: {{ include "fish-fry-orders.fullname" . }}-frontend-config
