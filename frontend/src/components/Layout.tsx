@@ -12,6 +12,7 @@ interface AppConfig {
     message: string;
     type: 'warning' | 'info';
   };
+  version?: string;
 }
 
 declare global {
@@ -89,6 +90,9 @@ export function Layout({ children }: LayoutProps) {
       {/* Footer */}
       <footer className="mt-auto py-3 text-center bg-white border-t border-slate-200 text-xs text-slate-500">
         <span className="font-mono">Fish Fry Orders</span>
+        {window.APP_CONFIG?.version && (
+          <span className="font-mono text-slate-400 ml-2">({window.APP_CONFIG.version})</span>
+        )}
       </footer>
     </div>
   );

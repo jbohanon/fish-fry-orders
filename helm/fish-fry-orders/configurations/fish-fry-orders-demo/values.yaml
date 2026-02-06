@@ -45,7 +45,7 @@ frontend:
     enabled: true
     message: "DEMO ENVIRONMENT - Data may be deleted at any time without notice"
     type: warning
-  version: "v0.0.1"
+  version: "v0.0.1-demo"
 
 # Database configuration - uses secretRef to mount full config
 database:

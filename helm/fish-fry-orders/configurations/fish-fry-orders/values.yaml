@@ -45,7 +45,7 @@ frontend:
     enabled: false
     message: ""
     type: info
-  version: "v0.0.0"
+  version: "v0.0.1"
 
 # Database configuration - uses secretRef to mount full config
 database:
