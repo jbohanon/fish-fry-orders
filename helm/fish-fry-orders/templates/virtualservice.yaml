@@ -1,0 +1,60 @@
+{{- if .Values.gloo.virtualService.enabled }}
+apiVersion: gateway.solo.io/v1
+kind: VirtualService
+metadata:
+  name: {{ .Values.gloo.virtualService.name | default (include "fish-fry-orders.fullname" .) }}
+  namespace: {{ .Values.gloo.namespace }}
+  labels:
+    {{- include "fish-fry-orders.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.gloo.virtualService.ssl.enabled }}
+  sslConfig:
+    secretRef:
+      name: {{ .Values.gloo.virtualService.ssl.secretName }}
+      namespace: {{ .Values.gloo.namespace }}
+    {{- if .Values.gloo.virtualService.ssl.sniDomains }}
+    sniDomains:
+      {{- toYaml .Values.gloo.virtualService.ssl.sniDomains | nindent 6 }}
+    {{- end }}
+  {{- end }}
+  virtualHost:
+    domains:
+      {{- toYaml .Values.gloo.virtualService.domains | nindent 6 }}
+    routes:
+      # API routes -> backend service
+      - matchers:
+          - prefix: /api
+        {{- if .Values.gloo.virtualService.websocket.enabled }}
+        options:
+          timeout: "0s"
+        {{- end }}
+        routeAction:
+          single:
+            kube:
+              ref:
+                name: {{ include "fish-fry-orders.backend.fullname" . }}
+                namespace: {{ .Release.Namespace }}
+              port: {{ .Values.backend.service.port }}
+      # WebSocket routes -> backend service
+      - matchers:
+          - prefix: /ws
+        options:
+          timeout: "0s"
+        routeAction:
+          single:
+            kube:
+              ref:
+                name: {{ include "fish-fry-orders.backend.fullname" . }}
+                namespace: {{ .Release.Namespace }}
+              port: {{ .Values.backend.service.port }}
+      # All other routes -> frontend service
+      - matchers:
+          - prefix: /
+        routeAction:
+          single:
+            kube:
+              ref:
+                name: {{ include "fish-fry-orders.frontend.fullname" . }}
+                namespace: {{ .Release.Namespace }}
+              port: {{ .Values.frontend.service.port }}
+{{- end }}

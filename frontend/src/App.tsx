@@ -5,6 +5,7 @@ import { OrdersPage } from './pages/OrdersPage';
 import { NewOrderPage } from './pages/NewOrderPage';
 import { OrderDetailsPage } from './pages/OrderDetailsPage';
 import { AdminPage } from './pages/AdminPage';
+import { SessionHistoryPage } from './pages/SessionHistoryPage';
 
 function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
   const { user, isLoading, isAuthenticated } = useAuth();
@@ -94,6 +95,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute adminOnly>
             <AdminPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/sessions"
+        element={
+          <ProtectedRoute adminOnly>
+            <SessionHistoryPage />
           </ProtectedRoute>
         }
       />

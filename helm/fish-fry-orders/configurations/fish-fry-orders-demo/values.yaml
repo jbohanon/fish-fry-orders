@@ -1,4 +1,5 @@
 # Fish Fry Orders Helm Chart Values
+namespace: fish-fry-orders-demo
 
 # Backend (Go API) configuration
 backend:
@@ -39,6 +40,12 @@ frontend:
     requests:
       cpu: 50m
       memory: 64Mi
+  # Environment banner
+  banner:
+    enabled: true
+    message: "DEMO ENVIRONMENT - Data may be deleted at any time without notice"
+    type: warning
+  version: "v1.0.0-demo"
 
 # Database configuration - uses secretRef to mount full config
 database:
@@ -65,32 +72,16 @@ gloo:
   # Namespace where Gloo Edge is installed
   namespace: gloo-ee-system
 
-  # Backend upstream configuration
-  backendUpstream:
-    enabled: true
-    name: fish-fry-orders-api-upstream
-
-  # Frontend upstream configuration
-  frontendUpstream:
-    enabled: true
-    name: fish-fry-orders-frontend-upstream
-
   # VirtualService configuration
   virtualService:
     enabled: true
-    name: fish-fry-orders
+    name: fish-fry-orders-demo
     domains:
-      - stmichaelfishfry.com
+      - fish-fry-demo.nonahob.net
     # SSL configuration (certificate should be managed by cert-manager)
     ssl:
-      enabled: false
-      secretName: stmichaelfishfry-tls
+      enabled: true
+      secretName: nonahob-tls
     # WebSocket configuration for /ws/* routes
     websocket:
       enabled: true
-
-nodeSelector: {}
-
-tolerations: []
-
-affinity: {}

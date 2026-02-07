@@ -34,6 +34,9 @@ COPY --from=builder /app/server .
 # Copy default config (can be overridden via ConfigMap mount)
 COPY --from=builder /app/config.yaml .
 
+# Copy database migrations
+COPY --from=builder /app/internal/database/migrations ./internal/database/migrations
+
 # Expose HTTP port
 EXPOSE 8080
 

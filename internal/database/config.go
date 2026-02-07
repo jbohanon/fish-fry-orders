@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver
@@ -14,6 +16,7 @@ import (
 
 // Config holds the database configuration
 type Config struct {
+	ctx      context.Context
 	Host     string
 	Port     string
 	User     string
@@ -25,12 +28,13 @@ type Config struct {
 // NewConfig creates a new database configuration from environment variables
 func NewConfig() *Config {
 	return &Config{
-		Host:     getEnvOrDefault("DB_HOST", "localhost"),
-		Port:     getEnvOrDefault("DB_PORT", "5432"),
-		User:     getEnvOrDefault("DB_USER", "postgres"),
-		Password: getEnvOrDefault("DB_PASSWORD", "postgres"),
-		DBName:   getEnvOrDefault("DB_NAME", "fish_fry_orders"),
-		SSLMode:  getEnvOrDefault("DB_SSL_MODE", "disable"),
+		Host:     getEnvOrPanic("DB_HOST", "localhost"),
+		Port:     getEnvOrPanic("DB_PORT", "5432"),
+		User:     getEnvOrPanic("DB_USER", "postgres"),
+		Password: getEnvOrPanic("DB_PASSWORD", "postgres"),
+		DBName:   getEnvOrPanic("DB_NAME", "fish_fry_orders"),
+		SSLMode:  getEnvOrPanic("DB_SSL_MODE", "disable"),
+		ctx:      context.Background(),
 	}
 }
 
@@ -51,10 +55,13 @@ func (c *Config) Connect() (*pgx.Conn, error) {
 
 // Context returns a context for database operations
 func (c *Config) Context() context.Context {
-	return context.Background()
+	if c.ctx == nil {
+		c.ctx = context.Background()
+	}
+	return c.ctx
 }
 
-// Migrate runs database migrations
+// Migrate runs database migrations with auto-discovery
 func (c *Config) Migrate() error {
 	db, err := sql.Open("pgx", c.DSN())
 	if err != nil {
@@ -62,104 +69,171 @@ func (c *Config) Migrate() error {
 	}
 	defer db.Close()
 
-	// Test connection
 	if err := db.Ping(); err != nil {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Get absolute path to migrations directory
+	ctx := context.Background()
+
+	// Check if schema_migrations table exists (indicates new migration system)
+	migrationsTableExists := c.tableExists(ctx, db, "schema_migrations")
+
+	// Create schema_migrations table if it doesn't exist
+	if err := c.ensureMigrationsTable(ctx, db); err != nil {
+		return fmt.Errorf("failed to create migrations table: %w", err)
+	}
+
+	// Get migrations directory
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 	migrationsPath := filepath.Join(wd, "internal", "database", "migrations")
 
-	ctx := context.Background()
-
-	// Check if migrations are already applied by checking if tables exist
-	var tableExists bool
-	checkErr := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'menu_items')").Scan(&tableExists)
-	if checkErr == nil && tableExists {
-		// Check if order ID conversion has been applied - check both orders.id and order_items.order_id
-		var ordersIDType, orderItemsIDType string
-		ordersErr := db.QueryRowContext(ctx, `
-			SELECT data_type 
-			FROM information_schema.columns 
-			WHERE table_name = 'orders' AND column_name = 'id'
-		`).Scan(&ordersIDType)
-		orderItemsErr := db.QueryRowContext(ctx, `
-			SELECT data_type 
-			FROM information_schema.columns 
-			WHERE table_name = 'order_items' AND column_name = 'order_id'
-		`).Scan(&orderItemsIDType)
-		
-		if ordersErr == nil && orderItemsErr == nil && ordersIDType == "integer" && orderItemsIDType == "integer" {
-			// All migrations applied - but double-check with fix function
-			if err := FixOrderIDSchema(db); err != nil {
-				return fmt.Errorf("failed to verify/fix schema: %w", err)
-			}
-			return nil
-		}
-		// Initial schema exists but order ID conversion not fully applied
-		// Apply the second migration
-		migrationSQL, err := os.ReadFile(filepath.Join(migrationsPath, "000002_convert_order_ids_to_integer.up.sql"))
-		if err != nil {
-			return fmt.Errorf("failed to read migration file: %w", err)
-		}
-		if _, err := db.ExecContext(ctx, string(migrationSQL)); err != nil {
-			if !isDuplicateError(err) {
-				return fmt.Errorf("failed to execute migration: %w", err)
-			}
-		}
-		// After migration, verify/fix schema
-		if err := FixOrderIDSchema(db); err != nil {
-			return fmt.Errorf("failed to verify/fix schema after migration: %w", err)
-		}
-		return nil
+	// Auto-discover migration files
+	migrations, err := discoverMigrations(migrationsPath)
+	if err != nil {
+		return fmt.Errorf("failed to discover migrations: %w", err)
 	}
 
-	// Execute migrations in order
-	migrations := []string{
-		"000001_init_schema.up.sql",
-		"000002_convert_order_ids_to_integer.up.sql",
+	// Bootstrap: if schema_migrations was just created but other tables exist,
+	// mark existing migrations as applied based on what tables/columns exist
+	if !migrationsTableExists {
+		if err := c.bootstrapMigrationState(ctx, db, migrations); err != nil {
+			return fmt.Errorf("failed to bootstrap migration state: %w", err)
+		}
 	}
 
-	for _, migrationFile := range migrations {
-		migrationSQL, err := os.ReadFile(filepath.Join(migrationsPath, migrationFile))
+	// Get applied migrations
+	applied, err := c.getAppliedMigrations(ctx, db)
+	if err != nil {
+		return fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+
+	// Apply pending migrations
+	for _, migration := range migrations {
+		if applied[migration] {
+			continue
+		}
+
+		migrationSQL, err := os.ReadFile(filepath.Join(migrationsPath, migration))
 		if err != nil {
-			return fmt.Errorf("failed to read migration file %s: %w", migrationFile, err)
+			return fmt.Errorf("failed to read migration file %s: %w", migration, err)
 		}
 
 		if _, err := db.ExecContext(ctx, string(migrationSQL)); err != nil {
-			if !isDuplicateError(err) {
-				return fmt.Errorf("failed to execute migration %s: %w", migrationFile, err)
-			}
+			return fmt.Errorf("failed to execute migration %s: %w", migration, err)
 		}
-	}
 
-	// After all migrations, verify/fix schema
-	if err := FixOrderIDSchema(db); err != nil {
-		return fmt.Errorf("failed to verify/fix schema after migrations: %w", err)
+		if err := c.recordMigration(ctx, db, migration); err != nil {
+			return fmt.Errorf("failed to record migration %s: %w", migration, err)
+		}
+
+		fmt.Printf("Applied migration: %s\n", migration)
 	}
 
 	return nil
 }
 
-// isDuplicateError checks if the error indicates objects already exist
-func isDuplicateError(err error) bool {
-	if err == nil {
-		return false
+// ensureMigrationsTable creates the schema_migrations table if it doesn't exist
+func (c *Config) ensureMigrationsTable(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version VARCHAR(255) PRIMARY KEY,
+			applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	return err
+}
+
+// tableExists checks if a table exists in the database
+func (c *Config) tableExists(ctx context.Context, db *sql.DB, tableName string) bool {
+	var exists bool
+	err := db.QueryRowContext(ctx,
+		"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = $1)",
+		tableName,
+	).Scan(&exists)
+	return err == nil && exists
+}
+
+// bootstrapMigrationState detects existing schema and marks migrations as applied
+// This handles databases that existed before the schema_migrations table
+func (c *Config) bootstrapMigrationState(ctx context.Context, db *sql.DB, migrations []string) error {
+	// Check if the schema already exists (sessions table is a good indicator of full schema)
+	if !c.tableExists(ctx, db, "sessions") {
+		// Fresh database, no bootstrapping needed
+		return nil
 	}
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "already exists") ||
-		strings.Contains(errStr, "duplicate key") ||
-		(strings.Contains(errStr, "relation") && strings.Contains(errStr, "already exists"))
+
+	// Schema exists, mark all current migrations as applied
+	for _, migration := range migrations {
+		if err := c.recordMigration(ctx, db, migration); err != nil {
+			return fmt.Errorf("failed to record bootstrapped migration %s: %w", migration, err)
+		}
+		fmt.Printf("Bootstrapped migration (already applied): %s\n", migration)
+	}
+
+	return nil
+}
+
+// getAppliedMigrations returns a map of already applied migrations
+func (c *Config) getAppliedMigrations(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	applied := make(map[string]bool)
+
+	rows, err := db.QueryContext(ctx, "SELECT version FROM schema_migrations")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, err
+		}
+		applied[version] = true
+	}
+
+	return applied, rows.Err()
+}
+
+// recordMigration records a migration as applied
+func (c *Config) recordMigration(ctx context.Context, db *sql.DB, version string) error {
+	_, err := db.ExecContext(ctx,
+		"INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)",
+		version, time.Now(),
+	)
+	return err
+}
+
+// discoverMigrations finds all *.up.sql files in the migrations directory
+func discoverMigrations(migrationsPath string) ([]string, error) {
+	entries, err := os.ReadDir(migrationsPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var migrations []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".up.sql") {
+			migrations = append(migrations, name)
+		}
+	}
+
+	// Sort by filename (relies on numeric prefix like 000001_, 000002_, etc.)
+	sort.Strings(migrations)
+
+	return migrations, nil
 }
 
 // getEnvOrDefault returns the value of an environment variable or a default value
-func getEnvOrDefault(key, defaultValue string) string {
+func getEnvOrPanic(key, errMsg string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
-	return defaultValue
+	panic(errMsg)
 }

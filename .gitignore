@@ -28,9 +28,9 @@ config.local.yaml
 .env
 .env.*
 
-# Compiled binaries
-migrate
-server
+# Compiled binaries (in root only)
+/migrate
+/server
 
 # Temporary files
 *.tmp

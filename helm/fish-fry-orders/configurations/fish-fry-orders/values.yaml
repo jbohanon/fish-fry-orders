@@ -1,0 +1,87 @@
+# Fish Fry Orders Helm Chart Values
+namespace: fish-fry-orders
+
+# Backend (Go API) configuration
+backend:
+  replicaCount: 1
+  image:
+    repository: git.nonahob.net/jacob/fish-fry-orders-api
+    tag: latest
+    pullPolicy: Always
+    pullSecrets:
+      - name: regcred
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# Frontend (React) configuration
+frontend:
+  replicaCount: 1
+  image:
+    repository: git.nonahob.net/jacob/fish-fry-orders-frontend
+    tag: latest
+    pullPolicy: Always
+    pullSecrets:
+      - name: regcred
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  # Environment banner (disabled for production)
+  banner:
+    enabled: false
+    message: ""
+    type: info
+  version: "v1.0.0"
+
+# Database configuration - uses secretRef to mount full config
+database:
+  secretRef:
+    name: postgres
+    namespace: ""  # defaults to release namespace if empty
+
+# Authentication - uses secretRef to mount full config
+auth:
+  secretRef:
+    name: user-auth
+    namespace: ""  # defaults to release namespace if empty
+
+# Redis configuration (optional)
+redis:
+  enabled: false
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+
+# Gloo Edge configuration
+gloo:
+  # Namespace where Gloo Edge is installed
+  namespace: gloo-ee-system
+
+  # VirtualService configuration
+  virtualService:
+    enabled: true
+    name: fish-fry-orders
+    domains:
+      - stmichaelfishfry.com
+    # SSL configuration (certificate should be managed by cert-manager)
+    ssl:
+      enabled: false
+      secretName: stmichaelfishfry-tls
+    # WebSocket configuration for /ws/* routes
+    websocket:
+      enabled: true
