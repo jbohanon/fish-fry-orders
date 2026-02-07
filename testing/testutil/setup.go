@@ -25,10 +25,9 @@ type TestSetup struct {
 
 // TestData holds pre-populated test data
 type TestData struct {
-	MenuItems    []types.DBMenuItem
-	Orders       []types.DBOrder
-	OrderItems   map[int][]types.DBOrderItem   // orderID -> items
-	ChatMessages map[int][]types.DBChatMessage // orderID -> messages
+	MenuItems  []types.DBMenuItem
+	Orders     []types.DBOrder
+	OrderItems map[int][]types.DBOrderItem // orderID -> items
 }
 
 // SetupTest creates a test database using Docker Compose, runs migrations, and populates test data
@@ -215,7 +214,7 @@ func (ts *TestSetup) Teardown(t *testing.T) {
 
 // populateTestData creates test data in the database
 func populateTestData(ctx context.Context, t *testing.T, repo database.Repository) *TestData {
-	// Create menu items
+	// Create menu items first (orders depend on these for price capture)
 	menuItems := []types.DBMenuItem{
 		{ID: "test-baked-fish", Name: "Baked fish dinner", Price: 12.99, IsActive: true, DisplayOrder: 1},
 		{ID: "test-fried-fish", Name: "Fried fish dinner", Price: 12.99, IsActive: true, DisplayOrder: 2},
@@ -224,93 +223,81 @@ func populateTestData(ctx context.Context, t *testing.T, repo database.Repositor
 		{ID: "test-extra-fish", Name: "Extra piece of fish", Price: 3.99, IsActive: true, DisplayOrder: 5},
 	}
 
+	// Build a lookup map for menu items
+	menuItemMap := make(map[string]*types.DBMenuItem)
 	for i := range menuItems {
 		item := &menuItems[i]
 		if err := repo.CreateMenuItem(ctx, item); err != nil {
 			t.Fatalf("Failed to create test menu item: %v", err)
 		}
+		menuItemMap[item.ID] = item
 	}
 
-	// Create orders
-	orders := []types.DBOrder{
-		{VehicleDescription: "Red Toyota Camry", Status: "NEW"},
-		{VehicleDescription: "Blue Honda Accord", Status: "IN_PROGRESS"},
-		{VehicleDescription: "White Ford F-150", Status: "COMPLETED"},
-		{VehicleDescription: "Black Tesla Model 3", Status: "NEW"},
+	// Create a session first - orders require a session
+	session, err := repo.GetOrCreateActiveSession(ctx)
+	if err != nil {
+		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	for i := range orders {
-		order := &orders[i]
-		if err := repo.CreateOrder(ctx, order); err != nil {
-			t.Fatalf("Failed to create test order: %v", err)
-		}
+	// Define orders with their items
+	type orderWithItems struct {
+		order types.DBOrder
+		items []*types.DBOrderItem
 	}
 
-	// Create order items
+	ordersWithItems := []orderWithItems{
+		{
+			order: types.DBOrder{SessionID: session.ID, VehicleDescription: "Red Toyota Camry", Status: "NEW"},
+			items: []*types.DBOrderItem{
+				{MenuItemID: "test-baked-fish", ItemName: "Baked fish dinner", UnitPrice: 12.99, Quantity: 2},
+				{MenuItemID: "test-kids-pizza", ItemName: "Kids pizza dinner", UnitPrice: 6.99, Quantity: 1},
+			},
+		},
+		{
+			order: types.DBOrder{SessionID: session.ID, VehicleDescription: "Blue Honda Accord", Status: "IN_PROGRESS"},
+			items: []*types.DBOrderItem{
+				{MenuItemID: "test-fried-fish", ItemName: "Fried fish dinner", UnitPrice: 12.99, Quantity: 1},
+				{MenuItemID: "test-extra-fish", ItemName: "Extra piece of fish", UnitPrice: 3.99, Quantity: 2},
+			},
+		},
+		{
+			order: types.DBOrder{SessionID: session.ID, VehicleDescription: "White Ford F-150", Status: "COMPLETED"},
+			items: []*types.DBOrderItem{
+				{MenuItemID: "test-baked-fish", ItemName: "Baked fish dinner", UnitPrice: 12.99, Quantity: 3},
+			},
+		},
+		{
+			order: types.DBOrder{SessionID: session.ID, VehicleDescription: "Black Tesla Model 3", Status: "NEW"},
+			items: []*types.DBOrderItem{
+				{MenuItemID: "test-fried-fish", ItemName: "Fried fish dinner", UnitPrice: 12.99, Quantity: 1},
+				{MenuItemID: "test-kids-pizza", ItemName: "Kids pizza dinner", UnitPrice: 6.99, Quantity: 2},
+				{MenuItemID: "test-extra-fish", ItemName: "Extra piece of fish", UnitPrice: 3.99, Quantity: 1},
+			},
+		},
+	}
+
+	// Create orders with items using the transactional method
+	orders := make([]types.DBOrder, 0, len(ordersWithItems))
 	orderItems := make(map[int][]types.DBOrderItem)
 
-	// Order 1 items
-	orderItems[orders[0].ID] = []types.DBOrderItem{
-		{OrderID: orders[0].ID, MenuItemID: "test-baked-fish", Quantity: 2},
-		{OrderID: orders[0].ID, MenuItemID: "test-kids-pizza", Quantity: 1},
-	}
-
-	// Order 2 items
-	orderItems[orders[1].ID] = []types.DBOrderItem{
-		{OrderID: orders[1].ID, MenuItemID: "test-fried-fish", Quantity: 1},
-		{OrderID: orders[1].ID, MenuItemID: "test-extra-fish", Quantity: 2},
-	}
-
-	// Order 3 items
-	orderItems[orders[2].ID] = []types.DBOrderItem{
-		{OrderID: orders[2].ID, MenuItemID: "test-baked-fish", Quantity: 3},
-	}
-
-	// Order 4 items
-	orderItems[orders[3].ID] = []types.DBOrderItem{
-		{OrderID: orders[3].ID, MenuItemID: "test-fried-fish", Quantity: 1},
-		{OrderID: orders[3].ID, MenuItemID: "test-kids-pizza", Quantity: 2},
-		{OrderID: orders[3].ID, MenuItemID: "test-extra-fish", Quantity: 1},
-	}
-
-	for orderID, items := range orderItems {
-		for j := range items {
-			item := &items[j]
-			if err := repo.CreateOrderItem(ctx, item); err != nil {
-				t.Fatalf("Failed to create test order item: %v", err)
-			}
-			orderItems[orderID][j] = *item // Update with generated ID
+	for i := range ordersWithItems {
+		owi := &ordersWithItems[i]
+		if err := repo.CreateOrderWithItems(ctx, &owi.order, owi.items); err != nil {
+			t.Fatalf("Failed to create test order with items: %v", err)
 		}
-	}
+		orders = append(orders, owi.order)
 
-	// Create chat messages
-	chatMessages := make(map[int][]types.DBChatMessage)
-
-	// Messages for order 1
-	chatMessages[orders[0].ID] = []types.DBChatMessage{
-		{OrderID: orders[0].ID, Content: "Order received", SenderRole: "WORKER"},
-		{OrderID: orders[0].ID, Content: "Starting preparation", SenderRole: "ADMIN"},
-	}
-
-	// Messages for order 2
-	chatMessages[orders[1].ID] = []types.DBChatMessage{
-		{OrderID: orders[1].ID, Content: "In the kitchen", SenderRole: "WORKER"},
-	}
-
-	for orderID, messages := range chatMessages {
-		for j := range messages {
-			msg := &messages[j]
-			if err := repo.CreateChatMessage(ctx, msg); err != nil {
-				t.Fatalf("Failed to create test chat message: %v", err)
-			}
-			chatMessages[orderID][j] = *msg // Update with generated ID
+		// Convert pointer slice to value slice for the map
+		items := make([]types.DBOrderItem, len(owi.items))
+		for j, item := range owi.items {
+			items[j] = *item
 		}
+		orderItems[owi.order.ID] = items
 	}
 
 	return &TestData{
-		MenuItems:    menuItems,
-		Orders:       orders,
-		OrderItems:   orderItems,
-		ChatMessages: chatMessages,
+		MenuItems:  menuItems,
+		Orders:     orders,
+		OrderItems: orderItems,
 	}
 }

@@ -20,3 +20,9 @@ data:
 
     grpc:
       address: ":50051"
+
+    # Allowed origins for CORS and WebSocket connections
+    allowed_origins:
+      {{- range .Values.gloo.virtualService.domains }}
+      - "https://{{ . }}"
+      {{- end }}

@@ -16,23 +16,38 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins in development
-	},
-}
-
 type OrderHandler struct {
-	repo        database.Repository
-	clients     map[*websocket.Conn]bool
-	clientsLock sync.RWMutex
+	repo           database.Repository
+	clients        map[*websocket.Conn]bool
+	clientsLock    sync.RWMutex
+	allowedOrigins []string
+	upgrader       websocket.Upgrader
 }
 
-func NewOrderHandler(repo database.Repository) *OrderHandler {
-	return &OrderHandler{
-		repo:    repo,
-		clients: make(map[*websocket.Conn]bool),
+func NewOrderHandler(repo database.Repository, allowedOrigins []string) *OrderHandler {
+	h := &OrderHandler{
+		repo:           repo,
+		clients:        make(map[*websocket.Conn]bool),
+		allowedOrigins: allowedOrigins,
 	}
+	h.upgrader = websocket.Upgrader{
+		CheckOrigin: h.checkOrigin,
+	}
+	return h
+}
+
+func (h *OrderHandler) checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true // Allow requests without Origin header (same-origin)
+	}
+	for _, allowed := range h.allowedOrigins {
+		if origin == allowed {
+			return true
+		}
+	}
+	logger.Warn("WebSocket connection rejected: origin not allowed", "origin", origin, "allowed", h.allowedOrigins)
+	return false
 }
 
 // CreateOrderRequest represents the request to create an order
@@ -100,40 +115,9 @@ func (h *OrderHandler) CreateOrder(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusConflict, "Session has expired. Please ask an admin to extend the session or start a new one.")
 	}
 
-	// Get next daily order number
-	dailyNum, err := h.repo.GetNextDailyOrderNumber(ctx, session.ID)
-	if err != nil {
-		logger.ErrorWithErr("Failed to get next daily order number", err, "session_id", session.ID)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get next order number")
-	}
-
-	// Create order with session reference
-	order := &types.DBOrder{
-		SessionID:          session.ID,
-		DailyOrderNumber:   dailyNum,
-		VehicleDescription: vehicleDesc,
-		Status:             "NEW",
-	}
-
-	if err := h.repo.CreateOrder(ctx, order); err != nil {
-		logger.ErrorWithErr("Failed to create order", err,
-			"session_id", session.ID,
-			"daily_order_number", dailyNum,
-			"vehicle_description", vehicleDesc,
-			"items_count", len(req.Items),
-		)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create order")
-	}
-
-	logger.Info("Order created successfully",
-		"order_id", order.ID,
-		"session_id", session.ID,
-		"daily_order_number", dailyNum,
-		"vehicle_description", vehicleDesc,
-	)
-
-	// Create order items with captured prices
-	for i, itemReq := range req.Items {
+	// Build order items with captured prices (validate menu items first)
+	orderItems := make([]*types.DBOrderItem, 0, len(req.Items))
+	for _, itemReq := range req.Items {
 		menuItemID := itemReq.MenuItemID
 		if menuItemID == "" {
 			menuItemID = itemReq.MenuItemId // Use camelCase if snake_case is empty
@@ -149,25 +133,37 @@ func (h *OrderHandler) CreateOrder(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, "menu item not found: "+menuItemID)
 		}
 
-		orderItem := &types.DBOrderItem{
-			OrderID:    order.ID,
+		orderItems = append(orderItems, &types.DBOrderItem{
 			MenuItemID: menuItemID,
 			ItemName:   menuItem.Name,  // Capture at order time
 			UnitPrice:  menuItem.Price, // Capture at order time
 			Quantity:   itemReq.Quantity,
-		}
-		if err := h.repo.CreateOrderItem(ctx, orderItem); err != nil {
-			logger.ErrorWithErr("Failed to create order item", err,
-				"order_id", order.ID,
-				"menu_item_id", menuItemID,
-				"item_name", menuItem.Name,
-				"unit_price", menuItem.Price,
-				"quantity", itemReq.Quantity,
-				"item_index", i,
-			)
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to create order item")
-		}
+		})
 	}
+
+	// Create order with items in a single transaction
+	// This atomically assigns the daily order number and creates all items
+	order := &types.DBOrder{
+		SessionID:          session.ID,
+		VehicleDescription: vehicleDesc,
+		Status:             "NEW",
+	}
+
+	if err := h.repo.CreateOrderWithItems(ctx, order, orderItems); err != nil {
+		logger.ErrorWithErr("Failed to create order with items", err,
+			"session_id", session.ID,
+			"vehicle_description", vehicleDesc,
+			"items_count", len(req.Items),
+		)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create order")
+	}
+
+	logger.Info("Order created successfully",
+		"order_id", order.ID,
+		"session_id", session.ID,
+		"daily_order_number", order.DailyOrderNumber,
+		"vehicle_description", vehicleDesc,
+	)
 
 	// Fetch the complete order with items for response
 	createdOrder, err := h.repo.GetOrderByID(ctx, order.ID)
@@ -407,7 +403,7 @@ func denormalizeStatus(status string) string {
 
 // HandleWebSocket handles WebSocket connections for real-time order updates
 func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
-	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+	ws, err := h.upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
 		return err
 	}
@@ -545,22 +541,7 @@ func (h *OrderHandler) BroadcastNewOrder(ctx context.Context, order *types.DBOrd
 	}
 
 	data, _ := json.Marshal(msg)
-
-	h.clientsLock.RLock()
-	clients := make([]*websocket.Conn, 0, len(h.clients))
-	for client := range h.clients {
-		clients = append(clients, client)
-	}
-	h.clientsLock.RUnlock()
-
-	// Send to all clients, remove dead ones
-	h.clientsLock.Lock()
-	for _, client := range clients {
-		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
-			delete(h.clients, client)
-		}
-	}
-	h.clientsLock.Unlock()
+	h.broadcastToClients(data)
 }
 
 // BroadcastOrderUpdate sends order updates to all connected WebSocket clients
@@ -597,22 +578,7 @@ func (h *OrderHandler) BroadcastOrderUpdate(ctx context.Context, order *types.DB
 	}
 
 	data, _ := json.Marshal(msg)
-
-	h.clientsLock.RLock()
-	clients := make([]*websocket.Conn, 0, len(h.clients))
-	for client := range h.clients {
-		clients = append(clients, client)
-	}
-	h.clientsLock.RUnlock()
-
-	// Send to all clients, remove dead ones
-	h.clientsLock.Lock()
-	for _, client := range clients {
-		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
-			delete(h.clients, client)
-		}
-	}
-	h.clientsLock.Unlock()
+	h.broadcastToClients(data)
 }
 
 // BroadcastSessionUpdate sends session updates to all connected WebSocket clients
@@ -640,21 +606,7 @@ func (h *OrderHandler) BroadcastSessionUpdate(ctx context.Context, session *type
 	}
 
 	data, _ := json.Marshal(msg)
-
-	h.clientsLock.RLock()
-	clients := make([]*websocket.Conn, 0, len(h.clients))
-	for client := range h.clients {
-		clients = append(clients, client)
-	}
-	h.clientsLock.RUnlock()
-
-	h.clientsLock.Lock()
-	for _, client := range clients {
-		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
-			delete(h.clients, client)
-		}
-	}
-	h.clientsLock.Unlock()
+	h.broadcastToClients(data)
 }
 
 // BroadcastSessionClosed sends session closed notification to all connected WebSocket clients
@@ -681,21 +633,7 @@ func (h *OrderHandler) BroadcastSessionClosed(ctx context.Context, session *type
 	}
 
 	data, _ := json.Marshal(msg)
-
-	h.clientsLock.RLock()
-	clients := make([]*websocket.Conn, 0, len(h.clients))
-	for client := range h.clients {
-		clients = append(clients, client)
-	}
-	h.clientsLock.RUnlock()
-
-	h.clientsLock.Lock()
-	for _, client := range clients {
-		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
-			delete(h.clients, client)
-		}
-	}
-	h.clientsLock.Unlock()
+	h.broadcastToClients(data)
 }
 
 // StatsResponse represents statistics in the API response
@@ -763,8 +701,13 @@ func (h *OrderHandler) BroadcastStatsUpdate(ctx context.Context) {
 	}
 
 	data, _ := json.Marshal(msg)
+	h.broadcastToClients(data)
+}
 
-	// Broadcast to all clients
+// broadcastToClients sends data to all connected WebSocket clients without holding locks during I/O.
+// Dead clients are collected and removed after all sends complete.
+func (h *OrderHandler) broadcastToClients(data []byte) {
+	// Copy client list under read lock
 	h.clientsLock.RLock()
 	clients := make([]*websocket.Conn, 0, len(h.clients))
 	for client := range h.clients {
@@ -772,12 +715,20 @@ func (h *OrderHandler) BroadcastStatsUpdate(ctx context.Context) {
 	}
 	h.clientsLock.RUnlock()
 
-	// Send to all clients, remove dead ones
-	h.clientsLock.Lock()
+	// Send to all clients without holding any lock
+	var deadClients []*websocket.Conn
 	for _, client := range clients {
 		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
-			delete(h.clients, client)
+			deadClients = append(deadClients, client)
 		}
 	}
-	h.clientsLock.Unlock()
+
+	// Remove dead clients under write lock (only if there are any)
+	if len(deadClients) > 0 {
+		h.clientsLock.Lock()
+		for _, client := range deadClients {
+			delete(h.clients, client)
+		}
+		h.clientsLock.Unlock()
+	}
 }

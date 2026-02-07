@@ -35,6 +35,9 @@ type Repository interface {
 	GetOrderByID(ctx context.Context, id int) (*types.DBOrder, error)
 	GetNextOrderID(ctx context.Context) (int, error)
 	CreateOrder(ctx context.Context, order *types.DBOrder) error
+	// CreateOrderWithItems creates an order and its items atomically in a transaction.
+	// It also assigns the daily order number atomically to avoid race conditions.
+	CreateOrderWithItems(ctx context.Context, order *types.DBOrder, items []*types.DBOrderItem) error
 	UpdateOrder(ctx context.Context, order *types.DBOrder) error
 	DeleteOrder(ctx context.Context, id int) error
 	CompleteAllSessionOrders(ctx context.Context, sessionID int) error
@@ -46,10 +49,6 @@ type Repository interface {
 	CreateOrderItem(ctx context.Context, item *types.DBOrderItem) error
 	UpdateOrderItem(ctx context.Context, item *types.DBOrderItem) error
 	DeleteOrderItem(ctx context.Context, id string) error
-
-	// Chat messages
-	GetChatMessages(ctx context.Context, orderID int) ([]types.DBChatMessage, error)
-	CreateChatMessage(ctx context.Context, message *types.DBChatMessage) error
 
 	// Statistics
 	GetOrderStatistics(ctx context.Context, startTime, endTime time.Time) (*types.DBOrderStatistics, error)

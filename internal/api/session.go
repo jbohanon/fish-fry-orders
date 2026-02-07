@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jbohanon/fish-fry-orders-v2/internal/database"
@@ -467,39 +468,13 @@ func (h *SessionHandler) CompareSessions(c echo.Context) error {
 
 // Helper function to split and trim comma-separated values
 func splitAndTrim(s string) []string {
-	var result []string
-	for _, part := range splitString(s, ',') {
-		trimmed := trimString(part)
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
 		if trimmed != "" {
 			result = append(result, trimmed)
 		}
 	}
 	return result
-}
-
-func splitString(s string, sep rune) []string {
-	var parts []string
-	current := ""
-	for _, c := range s {
-		if c == sep {
-			parts = append(parts, current)
-			current = ""
-		} else {
-			current += string(c)
-		}
-	}
-	parts = append(parts, current)
-	return parts
-}
-
-func trimString(s string) string {
-	start := 0
-	end := len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
 }

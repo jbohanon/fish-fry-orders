@@ -10,11 +10,12 @@ import (
 )
 
 type Config struct {
-	Database DatabaseConfig `yaml:"database"`
-	Redis    RedisConfig    `yaml:"redis"`
-	HTTP     HTTPConfig     `yaml:"http"`
-	GRPC     GRPCConfig     `yaml:"grpc"`
-	Auth     AuthConfig     `yaml:"auth"`
+	Database       DatabaseConfig `yaml:"database"`
+	Redis          RedisConfig    `yaml:"redis"`
+	HTTP           HTTPConfig     `yaml:"http"`
+	GRPC           GRPCConfig     `yaml:"grpc"`
+	Auth           AuthConfig     `yaml:"auth"`
+	AllowedOrigins []string       `yaml:"allowed_origins"`
 }
 
 type DatabaseConfig struct {

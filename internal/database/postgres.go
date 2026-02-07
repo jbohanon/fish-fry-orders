@@ -482,6 +482,67 @@ func (r *PostgresRepository) CreateOrder(ctx context.Context, order *types.DBOrd
 	return nil
 }
 
+// CreateOrderWithItems creates an order and its items atomically in a transaction.
+// It assigns the daily order number using an advisory lock to prevent race conditions.
+func (r *PostgresRepository) CreateOrderWithItems(ctx context.Context, order *types.DBOrder, items []*types.DBOrderItem) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	now := time.Now()
+	order.CreatedAt = now
+	order.UpdatedAt = now
+
+	// Acquire advisory lock on the session ID to prevent concurrent order creation race conditions
+	// This lock is released when the transaction ends
+	_, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, order.SessionID)
+	if err != nil {
+		return fmt.Errorf("failed to acquire advisory lock: %w", err)
+	}
+
+	// Now safely get the next daily order number
+	var nextNum int
+	err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(daily_order_number), 0) + 1 FROM orders WHERE session_id = $1`, order.SessionID).Scan(&nextNum)
+	if err != nil {
+		return fmt.Errorf("failed to get next daily order number: %w", err)
+	}
+	order.DailyOrderNumber = nextNum
+
+	// Create the order
+	orderQuery := `
+		INSERT INTO orders (session_id, daily_order_number, vehicle_description, status, created_at, updated_at) 
+		VALUES ($1, $2, $3, $4, $5, $6) 
+		RETURNING id
+	`
+	err = tx.QueryRow(ctx, orderQuery,
+		order.SessionID, order.DailyOrderNumber, order.VehicleDescription, order.Status, order.CreatedAt, order.UpdatedAt,
+	).Scan(&order.ID)
+	if err != nil {
+		return fmt.Errorf("failed to create order: %w", err)
+	}
+
+	// Create all order items
+	itemQuery := `INSERT INTO order_items (id, order_id, menu_item_id, item_name, unit_price, quantity, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	for _, item := range items {
+		item.ID = uuid.New().String()
+		item.OrderID = order.ID
+		item.CreatedAt = now
+
+		_, err = tx.Exec(ctx, itemQuery, item.ID, item.OrderID, item.MenuItemID, item.ItemName, item.UnitPrice, item.Quantity, item.CreatedAt)
+		if err != nil {
+			return fmt.Errorf("failed to create order item: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
 func (r *PostgresRepository) UpdateOrder(ctx context.Context, order *types.DBOrder) error {
 	order.UpdatedAt = time.Now()
 
@@ -561,40 +622,6 @@ func (r *PostgresRepository) DeleteOrderItem(ctx context.Context, id string) err
 	_, err := r.pool.Exec(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete order item: %w", err)
-	}
-	return nil
-}
-
-// Chat messages
-
-func (r *PostgresRepository) GetChatMessages(ctx context.Context, orderID int) ([]types.DBChatMessage, error) {
-	query := `SELECT id, order_id, content, sender_role, created_at FROM chat_messages WHERE order_id = $1 ORDER BY created_at`
-	rows, err := r.pool.Query(ctx, query, orderID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get chat messages: %w", err)
-	}
-	defer rows.Close()
-
-	var messages []types.DBChatMessage
-	for rows.Next() {
-		var message types.DBChatMessage
-		if err := rows.Scan(&message.ID, &message.OrderID, &message.Content, &message.SenderRole, &message.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan chat message: %w", err)
-		}
-		messages = append(messages, message)
-	}
-
-	return messages, nil
-}
-
-func (r *PostgresRepository) CreateChatMessage(ctx context.Context, message *types.DBChatMessage) error {
-	message.ID = uuid.New().String()
-	message.CreatedAt = time.Now()
-
-	query := `INSERT INTO chat_messages (id, order_id, content, sender_role, created_at) VALUES ($1, $2, $3, $4, $5)`
-	_, err := r.pool.Exec(ctx, query, message.ID, message.OrderID, message.Content, message.SenderRole, message.CreatedAt)
-	if err != nil {
-		return fmt.Errorf("failed to create chat message: %w", err)
 	}
 	return nil
 }

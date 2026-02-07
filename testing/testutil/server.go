@@ -26,10 +26,12 @@ func NewTestServer(repo database.Repository) *TestServer {
 	// Initialize services
 	authService := auth.NewService("test-worker-password", "test-admin-password")
 
+	// Test allowed origins
+	testAllowedOrigins := []string{"http://localhost:5173", "http://localhost:8080"}
+
 	// Initialize API handlers
-	orderHandler := api.NewOrderHandler(repo)
+	orderHandler := api.NewOrderHandler(repo, testAllowedOrigins)
 	menuHandler := api.NewMenuHandler(repo)
-	chatHandler := api.NewChatHandler(repo)
 	sessionHandler := api.NewSessionHandler(repo, orderHandler)
 
 	// Middleware
@@ -45,7 +47,7 @@ func NewTestServer(repo database.Repository) *TestServer {
 
 	// API routes (protected)
 	apiGroup := e.Group("/api", authService.Middleware())
-	
+
 	// Session routes
 	apiGroup.GET("/session", sessionHandler.GetCurrentSession)
 	apiGroup.POST("/session", sessionHandler.CreateSession)
@@ -55,14 +57,14 @@ func NewTestServer(repo database.Repository) *TestServer {
 	apiGroup.GET("/sessions/compare", sessionHandler.CompareSessions)
 	apiGroup.GET("/sessions/:id", sessionHandler.GetSession)
 	apiGroup.GET("/sessions/:id/orders", sessionHandler.GetSessionOrders)
-	
+
 	// Order routes
 	apiGroup.POST("/orders", orderHandler.CreateOrder)
 	apiGroup.GET("/orders", orderHandler.GetOrders)
 	apiGroup.GET("/orders/:id", orderHandler.GetOrder)
 	apiGroup.PUT("/orders/:id/status", orderHandler.UpdateOrderStatus)
 	apiGroup.DELETE("/orders/purge", orderHandler.PurgeOrders)
-	
+
 	// Menu routes
 	apiGroup.GET("/menu-items", menuHandler.GetMenuItems)
 	apiGroup.GET("/menu-items/:id", menuHandler.GetMenuItem)
@@ -70,10 +72,6 @@ func NewTestServer(repo database.Repository) *TestServer {
 	apiGroup.PUT("/menu-items/:id", menuHandler.UpdateMenuItem)
 	apiGroup.PUT("/menu-items/order", menuHandler.UpdateMenuItemsOrder)
 	apiGroup.DELETE("/menu-items/:id", menuHandler.DeleteMenuItem)
-	
-	// Chat routes
-	apiGroup.POST("/orders/:id/messages", chatHandler.CreateMessage)
-	apiGroup.GET("/orders/:id/messages", chatHandler.GetMessages)
 
 	// WebSocket for real-time updates
 	e.GET("/ws/orders", orderHandler.HandleWebSocket, authService.Middleware())
