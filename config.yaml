@@ -8,13 +8,6 @@ database:
   dbname: "fish_fry_orders"
   sslmode: "disable"
 
-redis:
-  enabled: false
-  host: "localhost"
-  port: 6379
-  password: ""
-  db: 0
-
 http:
   address: ":8080"
 

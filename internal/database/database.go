@@ -8,15 +8,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jbohanon/fish-fry-orders-v2/internal/config"
 	"github.com/jbohanon/fish-fry-orders-v2/proto"
-	"github.com/redis/go-redis/v9"
 )
 
 type Database struct {
 	pool *pgxpool.Pool
-}
-
-type RedisClient struct {
-	client *redis.Client
 }
 
 func New(cfg *config.DatabaseConfig) (*Database, error) {
@@ -35,27 +30,6 @@ func New(cfg *config.DatabaseConfig) (*Database, error) {
 
 func (db *Database) Close() {
 	db.pool.Close()
-}
-
-func NewRedisClient(cfg *config.RedisConfig) (*RedisClient, error) {
-	client := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Password: cfg.Password,
-		DB:       cfg.DB,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("failed to connect to Redis: %v", err)
-	}
-
-	return &RedisClient{client: client}, nil
-}
-
-func (r *RedisClient) Close() {
-	r.client.Close()
 }
 
 // Database operations

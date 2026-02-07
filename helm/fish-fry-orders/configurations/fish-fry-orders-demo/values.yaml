@@ -1,12 +1,13 @@
 # Fish Fry Orders Helm Chart Values
 namespace: fish-fry-orders-demo
+version: &_version "v1.0.0"
 
 # Backend (Go API) configuration
 backend:
   replicaCount: 1
   image:
     repository: git.nonahob.net/jacob/fish-fry-orders-api
-    tag: latest
+    tag: *_version
     pullPolicy: Always
     pullSecrets:
       - name: regcred
@@ -26,7 +27,7 @@ frontend:
   replicaCount: 1
   image:
     repository: git.nonahob.net/jacob/fish-fry-orders-frontend
-    tag: latest
+    tag: *_version
     pullPolicy: Always
     pullSecrets:
       - name: regcred
@@ -45,7 +46,7 @@ frontend:
     enabled: true
     message: "DEMO ENVIRONMENT - Data may be deleted at any time without notice"
     type: warning
-  version: "v1.0.0-demo"
+  version: *_version
 
 # Database configuration - uses secretRef to mount full config
 database:
@@ -58,14 +59,6 @@ auth:
   secretRef:
     name: user-auth
     namespace: ""  # defaults to release namespace if empty
-
-# Redis configuration (optional)
-redis:
-  enabled: false
-  host: "localhost"
-  port: 6379
-  password: ""
-  db: 0
 
 # Gloo Edge configuration
 gloo:

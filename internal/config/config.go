@@ -11,7 +11,6 @@ import (
 
 type Config struct {
 	Database       DatabaseConfig `yaml:"database"`
-	Redis          RedisConfig    `yaml:"redis"`
 	HTTP           HTTPConfig     `yaml:"http"`
 	GRPC           GRPCConfig     `yaml:"grpc"`
 	Auth           AuthConfig     `yaml:"auth"`
@@ -25,14 +24,6 @@ type DatabaseConfig struct {
 	Password string `yaml:"password"`
 	DBName   string `yaml:"dbname"`
 	SSLMode  string `yaml:"sslmode"`
-}
-
-type RedisConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
 }
 
 type HTTPConfig struct {

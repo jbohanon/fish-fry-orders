@@ -7,14 +7,6 @@ metadata:
 data:
   config.yaml: |
     # Database and auth configs loaded from secrets at /app/secrets/
-
-    redis:
-      enabled: {{ .Values.redis.enabled }}
-      host: {{ .Values.redis.host | quote }}
-      port: {{ .Values.redis.port }}
-      password: {{ .Values.redis.password | quote }}
-      db: {{ .Values.redis.db }}
-
     http:
       address: ":8080"
 
