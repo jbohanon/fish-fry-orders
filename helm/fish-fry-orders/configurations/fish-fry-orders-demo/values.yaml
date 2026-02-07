@@ -1,13 +1,13 @@
 # Fish Fry Orders Helm Chart Values
 namespace: fish-fry-orders-demo
-version: &_version "v1.0.0"
+version: __VERSION__
 
 # Backend (Go API) configuration
 backend:
   replicaCount: 1
   image:
     repository: git.nonahob.net/jacob/fish-fry-orders-api
-    tag: *_version
+    tag: __VERSION__
     pullPolicy: Always
     pullSecrets:
       - name: regcred
@@ -27,7 +27,7 @@ frontend:
   replicaCount: 1
   image:
     repository: git.nonahob.net/jacob/fish-fry-orders-frontend
-    tag: *_version
+    tag: __VERSION__
     pullPolicy: Always
     pullSecrets:
       - name: regcred
@@ -46,7 +46,7 @@ frontend:
     enabled: true
     message: "DEMO ENVIRONMENT - Data may be deleted at any time without notice"
     type: warning
-  version: *_version
+  version: __VERSION__
 
 # Database configuration - uses secretRef to mount full config
 database:

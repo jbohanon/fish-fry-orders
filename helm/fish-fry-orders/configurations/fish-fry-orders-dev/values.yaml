@@ -6,7 +6,7 @@ backend:
   replicaCount: 1
   image:
     repository: git.nonahob.net/jacob/fish-fry-orders-api
-    tag: latest
+    tag: __VERSION__
     pullPolicy: Always
     pullSecrets:
       - name: regcred
@@ -26,7 +26,7 @@ frontend:
   replicaCount: 1
   image:
     repository: git.nonahob.net/jacob/fish-fry-orders-frontend
-    tag: latest
+    tag: __VERSION__
     pullPolicy: Always
     pullSecrets:
       - name: regcred
@@ -45,7 +45,7 @@ frontend:
     enabled: true
     message: "DEV ENVIRONMENT - Data may be deleted at any time without notice"
     type: warning
-  version: "dev"
+  version: __VERSION__
 
 # Database configuration - uses secretRef to mount full config
 database:

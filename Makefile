@@ -1,4 +1,4 @@
-.PHONY: all build test clean proto backend docker deploy helm-lint helm-template frontend
+.PHONY: all build test clean proto backend docker deploy helm-lint helm-template frontend build-chart
 
 # Container registry - override with: make docker-push REGISTRY=myregistry.io
 REGISTRY ?= git.nonahob.net
@@ -32,6 +32,10 @@ endif
 
 HELM_CHART := helm/fish-fry-orders
 VALUES_FILE := $(HELM_CHART)/configurations/$(CONFIG_DIR)/values.yaml
+
+# Build chart output (gitignored via _output/)
+BUILD_CHART := _output/helm/fish-fry-orders
+BUILD_VALUES_FILE := $(BUILD_CHART)/configurations/$(CONFIG_DIR)/values.yaml
 
 all: proto backend
 
@@ -98,39 +102,47 @@ migrate-down:
 
 # =============================================================================
 # Helm chart operations (environment-aware)
-# Usage: make helm-deploy ENV=demo
+# Usage: make helm-deploy ENV=demo VERSION=v1.2.0
 # =============================================================================
 
-helm-lint:
-	helm lint $(HELM_CHART)
+# Build a temporary copy of the chart with __VERSION__ replaced
+build-chart:
+	@echo "Building chart with VERSION=$(VERSION) for ENV=$(ENV)..."
+	@rm -rf $(BUILD_CHART)
+	@mkdir -p _output/helm
+	@cp -r $(HELM_CHART) $(BUILD_CHART)
+	@sed -i 's/__VERSION__/$(VERSION)/g' $(BUILD_VALUES_FILE)
+
+helm-lint: build-chart
+	helm lint $(BUILD_CHART)
 
 # Template the chart with environment-specific values
-helm-template:
-	@echo "Templating for environment: $(ENV) (namespace: $(NAMESPACE))"
-	helm template $(RELEASE_NAME) $(HELM_CHART) \
-		-f $(VALUES_FILE) \
+helm-template: build-chart
+	@echo "Templating for environment: $(ENV) (namespace: $(NAMESPACE), version: $(VERSION))"
+	helm template $(RELEASE_NAME) $(BUILD_CHART) \
+		-f $(BUILD_VALUES_FILE) \
 		-n $(NAMESPACE)
 
 # Install the chart for the specified environment
-helm-install:
-	@echo "Installing to environment: $(ENV) (namespace: $(NAMESPACE))"
-	helm install $(RELEASE_NAME) $(HELM_CHART) \
-		-f $(VALUES_FILE) \
+helm-install: build-chart
+	@echo "Installing to environment: $(ENV) (namespace: $(NAMESPACE), version: $(VERSION))"
+	helm install $(RELEASE_NAME) $(BUILD_CHART) \
+		-f $(BUILD_VALUES_FILE) \
 		-n $(NAMESPACE) \
 		--create-namespace
 
 # Upgrade the chart for the specified environment
-helm-upgrade:
-	@echo "Upgrading environment: $(ENV) (namespace: $(NAMESPACE))"
-	helm upgrade $(RELEASE_NAME) $(HELM_CHART) \
-		-f $(VALUES_FILE) \
+helm-upgrade: build-chart
+	@echo "Upgrading environment: $(ENV) (namespace: $(NAMESPACE), version: $(VERSION))"
+	helm upgrade $(RELEASE_NAME) $(BUILD_CHART) \
+		-f $(BUILD_VALUES_FILE) \
 		-n $(NAMESPACE)
 
 # Install or upgrade (idempotent deploy)
-helm-deploy:
-	@echo "Deploying to environment: $(ENV) (namespace: $(NAMESPACE))"
-	helm upgrade --install $(RELEASE_NAME) $(HELM_CHART) \
-		-f $(VALUES_FILE) \
+helm-deploy: build-chart
+	@echo "Deploying to environment: $(ENV) (namespace: $(NAMESPACE), version: $(VERSION))"
+	helm upgrade --install $(RELEASE_NAME) $(BUILD_CHART) \
+		-f $(BUILD_VALUES_FILE) \
 		-n $(NAMESPACE) \
 		--create-namespace
 
@@ -144,9 +156,9 @@ helm-status:
 	helm status $(RELEASE_NAME) -n $(NAMESPACE)
 
 # Show what would change in an upgrade
-helm-diff:
-	helm diff upgrade $(RELEASE_NAME) $(HELM_CHART) \
-		-f $(VALUES_FILE) \
+helm-diff: build-chart
+	helm diff upgrade $(RELEASE_NAME) $(BUILD_CHART) \
+		-f $(BUILD_VALUES_FILE) \
 		-n $(NAMESPACE)
 
 # =============================================================================
