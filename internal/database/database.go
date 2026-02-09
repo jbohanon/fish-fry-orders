@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jbohanon/fish-fry-orders-v2/internal/config"
-	"github.com/jbohanon/fish-fry-orders-v2/proto"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/config"
+	"git.nonahob.net/jacob/fish-fry-orders/proto"
 	"github.com/redis/go-redis/v9"
 )
 

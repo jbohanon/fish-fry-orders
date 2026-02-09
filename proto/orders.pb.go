@@ -920,7 +920,7 @@ const file_proto_orders_proto_rawDesc = "" +
 	"\vGetMessages\x12\x1a.orders.GetMessagesRequest\x1a\x13.orders.ChatMessage\"\x000\x01\x12H\n" +
 	"\rGetStatistics\x12\x1c.orders.GetStatisticsRequest\x1a\x17.orders.OrderStatistics\"\x00\x12K\n" +
 	"\fGetMenuItems\x12\x1b.orders.GetMenuItemsRequest\x1a\x1c.orders.GetMenuItemsResponse\"\x00\x12C\n" +
-	"\x0eUpdateMenuItem\x12\x1d.orders.UpdateMenuItemRequest\x1a\x10.orders.MenuItem\"\x00B.Z,github.com/jbohanon/fish-fry-orders-v2/protob\x06proto3"
+	"\x0eUpdateMenuItem\x12\x1d.orders.UpdateMenuItemRequest\x1a\x10.orders.MenuItem\"\x00B.Z,git.nonahob.net/jacob/fish-fry-orders/protob\x06proto3"
 
 var (
 	file_proto_orders_proto_rawDescOnce sync.Once

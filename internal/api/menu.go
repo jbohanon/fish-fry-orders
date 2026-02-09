@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/jbohanon/fish-fry-orders-v2/internal/database"
-	"github.com/jbohanon/fish-fry-orders-v2/internal/types"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/database"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/types"
 	"github.com/labstack/echo/v4"
 )
 

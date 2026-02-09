@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/jbohanon/fish-fry-orders-v2/testing/testutil"
+	"git.nonahob.net/jacob/fish-fry-orders/testing/testutil"
 )
 
 func TestAuth_Login(t *testing.T) {

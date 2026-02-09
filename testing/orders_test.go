@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/jbohanon/fish-fry-orders-v2/internal/api"
-	"github.com/jbohanon/fish-fry-orders-v2/testing/testutil"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/api"
+	"git.nonahob.net/jacob/fish-fry-orders/testing/testutil"
 )
 
 func TestOrders_CreateOrder(t *testing.T) {

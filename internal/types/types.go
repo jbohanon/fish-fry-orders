@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"time"
 
-	pb "github.com/jbohanon/fish-fry-orders-v2/proto"
+	pb "git.nonahob.net/jacob/fish-fry-orders/proto"
 )
 
 // DBSession represents an event session in the database

@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/jbohanon/fish-fry-orders-v2/internal/api"
-	"github.com/jbohanon/fish-fry-orders-v2/internal/auth"
-	"github.com/jbohanon/fish-fry-orders-v2/internal/database"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/api"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/auth"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/database"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )

@@ -1,6 +1,6 @@
-module github.com/jbohanon/fish-fry-orders-v2
+module git.nonahob.net/jacob/fish-fry-orders
 
-go 1.23
+go 1.24
 
 toolchain go1.24.0
 
