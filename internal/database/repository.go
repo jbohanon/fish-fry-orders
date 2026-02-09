@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/jbohanon/fish-fry-orders-v2/internal/types"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/types"
 )
 
 // Repository defines the interface for database operations

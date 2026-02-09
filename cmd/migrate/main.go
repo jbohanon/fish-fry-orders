@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver
-	"github.com/jbohanon/fish-fry-orders-v2/internal/config"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/config"
 )
 
 func main() {

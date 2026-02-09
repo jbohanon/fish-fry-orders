@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/jbohanon/fish-fry-orders-v2/internal/api"
-	"github.com/jbohanon/fish-fry-orders-v2/testing/testutil"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/api"
+	"git.nonahob.net/jacob/fish-fry-orders/testing/testutil"
 )
 
 func TestWebSocket_Connection(t *testing.T) {

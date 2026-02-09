@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jbohanon/fish-fry-orders-v2/internal/config"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/config"
 )
 
 // Init initializes the database connection and runs migrations

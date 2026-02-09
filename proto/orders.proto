@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package orders;
 
-option go_package = "github.com/jbohanon/fish-fry-orders-v2/proto";
+option go_package = "git.nonahob.net/jacob/fish-fry-orders/proto";
 
 // Order status
 enum OrderStatus {

@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jbohanon/fish-fry-orders-v2/internal/logger"
-	"github.com/jbohanon/fish-fry-orders-v2/internal/types"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/logger"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/types"
 )
 
 // PostgresRepository implements the Repository interface using PostgreSQL
