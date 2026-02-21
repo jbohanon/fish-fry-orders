@@ -30,7 +30,7 @@ func NewTestServer(repo database.Repository) *TestServer {
 	testAllowedOrigins := []string{"http://localhost:5173", "http://localhost:8080"}
 
 	// Initialize API handlers
-	orderHandler := api.NewOrderHandler(repo, testAllowedOrigins)
+	orderHandler := api.NewOrderHandler(repo, authService, testAllowedOrigins)
 	menuHandler := api.NewMenuHandler(repo)
 	sessionHandler := api.NewSessionHandler(repo, orderHandler)
 
@@ -62,6 +62,7 @@ func NewTestServer(repo database.Repository) *TestServer {
 	apiGroup.POST("/orders", orderHandler.CreateOrder)
 	apiGroup.GET("/orders", orderHandler.GetOrders)
 	apiGroup.GET("/orders/:id", orderHandler.GetOrder)
+	apiGroup.PUT("/orders/:id", orderHandler.UpdateOrder)
 	apiGroup.PUT("/orders/:id/status", orderHandler.UpdateOrderStatus)
 	apiGroup.DELETE("/orders/purge", orderHandler.PurgeOrders)
 
@@ -103,11 +104,11 @@ func (ts *TestServer) Close() {
 // Note: This method is not used in the current test suite, but kept for potential future use
 func (ts *TestServer) AuthenticatedRequest(method, path, password string) (*http.Request, error) {
 	req := httptest.NewRequest(method, ts.BaseURL+path, nil)
-	
+
 	// Login first to get session cookie
 	loginReq := httptest.NewRequest("POST", ts.BaseURL+"/api/auth/login", nil)
 	loginReq.Header.Set("Content-Type", "application/json")
-	
+
 	// For now, we'll use a simpler approach - create a session directly
 	// In a real test, you'd make a login request and extract the cookie
 	user, sessionID, err := ts.AuthService.Login(loginReq, httptest.NewRecorder(), password)
@@ -115,12 +116,12 @@ func (ts *TestServer) AuthenticatedRequest(method, path, password string) (*http
 		return nil, err
 	}
 	_ = user // Use user to avoid unused variable
-	
+
 	// Set the session cookie
 	req.AddCookie(&http.Cookie{
 		Name:  "session",
 		Value: sessionID,
 	})
-	
+
 	return req, nil
 }

@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"strconv"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -52,7 +54,7 @@ var (
 
 // RecordHTTPRequest records HTTP request metrics
 func RecordHTTPRequest(method, path string, status int, duration float64) {
-	HTTPRequestsTotal.WithLabelValues(method, path, string(status)).Inc()
+	HTTPRequestsTotal.WithLabelValues(method, path, strconv.Itoa(status)).Inc()
 	HTTPRequestDuration.WithLabelValues(method, path).Observe(duration)
 }
 

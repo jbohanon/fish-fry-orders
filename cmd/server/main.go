@@ -55,7 +55,7 @@ func main() {
 	logger.Info("Configured allowed origins", "origins", allowedOrigins)
 
 	// Initialize API handlers
-	orderHandler := api.NewOrderHandler(dbRepo, allowedOrigins)
+	orderHandler := api.NewOrderHandler(dbRepo, authService, allowedOrigins)
 	menuHandler := api.NewMenuHandler(dbRepo)
 	sessionHandler := api.NewSessionHandler(dbRepo, orderHandler)
 
@@ -81,6 +81,7 @@ func main() {
 	apiGroup.POST("/orders", orderHandler.CreateOrder)
 	apiGroup.GET("/orders", orderHandler.GetOrders)
 	apiGroup.GET("/orders/:id", orderHandler.GetOrder)
+	apiGroup.PUT("/orders/:id", orderHandler.UpdateOrder)
 	apiGroup.PUT("/orders/:id/status", orderHandler.UpdateOrderStatus)
 	apiGroup.GET("/menu-items", menuHandler.GetMenuItems)
 	apiGroup.GET("/menu-items/:id", menuHandler.GetMenuItem)

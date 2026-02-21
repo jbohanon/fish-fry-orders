@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react';
 import { Layout } from '../components/Layout';
 import { useOrders } from '../hooks/useOrders';
 import { getMenuItems, createMenuItem, deleteMenuItem, updateMenuItemsOrder, updateMenuItem } from '../api/menu';
-import { purgeOrders } from '../api/orders';
+import { purgeOrders, updateOrder } from '../api/orders';
 import { updateSession, closeSession, createSession } from '../api/sessions';
-import type { MenuItem } from '../types';
+import type { MenuItem, Order } from '../types';
 
 export function AdminPage() {
-  const { orders, stats, session, hasActiveSession, reloadSession } = useOrders();
+  const { orders, stats, session, hasActiveSession, reload, reloadSession } = useOrders();
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +28,15 @@ export function AdminPage() {
 
   // Drilldown state
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+
+  // Order management
+  const [ordersExpanded, setOrdersExpanded] = useState(true);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [editingOrderName, setEditingOrderName] = useState('');
+  const [editingOrderItems, setEditingOrderItems] = useState<Array<{ menuItemId: string; quantity: number | string }>>([
+    { menuItemId: '', quantity: 1 },
+  ]);
+  const [isOrderSaving, setIsOrderSaving] = useState(false);
 
   // New menu item form
   const [newItemName, setNewItemName] = useState('');
@@ -204,6 +213,67 @@ export function AdminPage() {
       // Revert on error
       setMenuItems(menuItems);
       setError('Failed to reorder menu items');
+    }
+  };
+
+  const handleStartOrderEdit = (order: Order) => {
+    setEditingOrder(order);
+    setEditingOrderName(order.customerName || order.vehicle_description || '');
+    setEditingOrderItems(
+      order.items.map((item) => ({
+        menuItemId: item.menuItemId || item.menu_item_id || '',
+        quantity: item.quantity || 1,
+      }))
+    );
+  };
+
+  const handleAddOrderItem = () => {
+    setEditingOrderItems([...editingOrderItems, { menuItemId: '', quantity: 1 }]);
+  };
+
+  const handleRemoveOrderItem = (index: number) => {
+    if (editingOrderItems.length === 1) return;
+    setEditingOrderItems(editingOrderItems.filter((_, i) => i !== index));
+  };
+
+  const handleOrderItemChange = (index: number, field: 'menuItemId' | 'quantity', value: string | number) => {
+    const next = [...editingOrderItems];
+    next[index] = { ...next[index], [field]: value };
+    setEditingOrderItems(next);
+  };
+
+  const handleSaveOrderEdit = async () => {
+    if (!editingOrder) return;
+
+    const validItems = editingOrderItems
+      .filter((item) => item.menuItemId)
+      .map((item) => ({
+        menuItemId: item.menuItemId,
+        quantity: typeof item.quantity === 'string' ? parseInt(item.quantity, 10) || 0 : item.quantity,
+      }))
+      .filter((item) => item.quantity > 0);
+
+    if (!editingOrderName.trim()) {
+      setError('Vehicle description is required when editing an order');
+      return;
+    }
+    if (validItems.length === 0) {
+      setError('At least one valid order item is required');
+      return;
+    }
+
+    setIsOrderSaving(true);
+    try {
+      await updateOrder(editingOrder.id, {
+        customerName: editingOrderName.trim(),
+        items: validItems,
+      });
+      setEditingOrder(null);
+      await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update order');
+    } finally {
+      setIsOrderSaving(false);
     }
   };
 
@@ -597,6 +667,51 @@ export function AdminPage() {
           )}
         </div>
 
+        {/* Order Management Section */}
+        <div className="bg-white rounded-xl shadow-md overflow-hidden">
+          <div
+            className="flex justify-between items-center p-6 cursor-pointer hover:bg-slate-50 transition-colors"
+            onClick={() => setOrdersExpanded(!ordersExpanded)}
+          >
+            <h3 className="text-xl font-semibold text-slate-800">Order Management</h3>
+            <button className="text-slate-500 text-xl">{ordersExpanded ? '▼' : '▶'}</button>
+          </div>
+          {ordersExpanded && (
+            <div className="px-6 pb-6">
+              <p className="text-sm text-slate-500 mb-4">
+                Editing recaptures current menu item names and prices when you save.
+              </p>
+              {orders.length === 0 ? (
+                <p className="text-slate-500">No orders to edit.</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {orders.map((order) => (
+                    <div
+                      key={order.id}
+                      className="flex flex-wrap justify-between items-center gap-3 p-4 bg-slate-50 rounded-lg border border-slate-200"
+                    >
+                      <div>
+                        <div className="font-semibold text-slate-800">
+                          #{order.dailyOrderNumber || order.id} - {order.customerName || order.vehicle_description || 'No vehicle'}
+                        </div>
+                        <div className="text-sm text-slate-500">
+                          Status: {order.status} | Total: ${order.total.toFixed(2)}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleStartOrderEdit(order)}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-all"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Menu Items Section */}
         <div className="bg-white rounded-xl shadow-md overflow-hidden">
           <div
@@ -721,6 +836,99 @@ export function AdminPage() {
             </div>
           )}
         </div>
+
+        {/* Edit Order Modal */}
+        {editingOrder && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[85vh] overflow-y-auto">
+              <h3 className="text-xl font-semibold text-slate-800 mb-4">
+                Edit Order #{editingOrder.dailyOrderNumber || editingOrder.id}
+              </h3>
+              <p className="text-sm text-slate-500 mb-4">
+                Saving will recapture current menu item names and prices.
+              </p>
+
+              <div className="flex flex-col gap-4">
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Vehicle Description</label>
+                  <input
+                    type="text"
+                    value={editingOrderName}
+                    onChange={(e) => setEditingOrderName(e.target.value)}
+                    className="w-full p-2 border border-slate-300 rounded-md"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  {editingOrderItems.map((item, index) => (
+                    <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 items-end">
+                      <div>
+                        <label className="block text-sm text-slate-600 mb-1">Menu Item</label>
+                        <select
+                          value={item.menuItemId}
+                          onChange={(e) => handleOrderItemChange(index, 'menuItemId', e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-md bg-white"
+                        >
+                          <option value="">Select item...</option>
+                          {menuItems.map((menuItem) => (
+                            <option key={menuItem.id} value={menuItem.id}>
+                              {menuItem.name} - ${menuItem.price.toFixed(2)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-slate-600 mb-1">Qty</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) =>
+                            handleOrderItemChange(
+                              index,
+                              'quantity',
+                              e.target.value === '' ? '' : parseInt(e.target.value, 10) || ''
+                            )
+                          }
+                          className="w-20 p-2 border border-slate-300 rounded-md"
+                        />
+                      </div>
+                      <button
+                        onClick={() => handleRemoveOrderItem(index)}
+                        disabled={editingOrderItems.length === 1}
+                        className="px-3 py-2 bg-red-500 text-white rounded-md text-sm hover:bg-red-600 disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={handleAddOrderItem}
+                    className="self-start px-3 py-1.5 bg-slate-500 text-white rounded-md text-sm hover:bg-slate-600"
+                  >
+                    + Add Item
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => setEditingOrder(null)}
+                  className="px-4 py-2 bg-slate-200 text-slate-700 rounded-md font-medium hover:bg-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveOrderEdit}
+                  disabled={isOrderSaving}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {isOrderSaving ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Purge Orders Section */}
         <div className="bg-white rounded-xl shadow-md overflow-hidden">

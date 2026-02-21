@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	"git.nonahob.net/jacob/fish-fry-orders/internal/logger"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"git.nonahob.net/jacob/fish-fry-orders/internal/logger"
-	"git.nonahob.net/jacob/fish-fry-orders/internal/types"
 )
 
 // PostgresRepository implements the Repository interface using PostgreSQL
@@ -178,9 +178,10 @@ func (r *PostgresRepository) GetOrCreateActiveSession(ctx context.Context) (*typ
 	}
 
 	// Create new session
-	now := time.Now()
-	// Default expiry is end of today (midnight)
-	endOfDay := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, now.Location())
+	now := time.Now().UTC()
+	// Default expiry is end of current UTC day to avoid timezone truncation issues
+	// with TIMESTAMP columns and NOW() comparisons.
+	endOfDay := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, time.UTC)
 
 	session = &types.DBSession{
 		EventName: fmt.Sprintf("Fish Fry %s", now.Format("2006-01-02")),
@@ -328,10 +329,12 @@ func (r *PostgresRepository) GetMenuItemByID(ctx context.Context, id string) (*t
 }
 
 func (r *PostgresRepository) CreateMenuItem(ctx context.Context, item *types.DBMenuItem) error {
-	item.ID = uuid.New().String()
+	if item.ID == "" {
+		item.ID = uuid.New().String()
+	}
 	item.CreatedAt = time.Now()
 	item.UpdatedAt = item.CreatedAt
-	
+
 	// If display_order is not set, get the max and add 1
 	if item.DisplayOrder == 0 {
 		var maxOrder int
@@ -532,6 +535,48 @@ func (r *PostgresRepository) CreateOrderWithItems(ctx context.Context, order *ty
 
 		_, err = tx.Exec(ctx, itemQuery, item.ID, item.OrderID, item.MenuItemID, item.ItemName, item.UnitPrice, item.Quantity, item.CreatedAt)
 		if err != nil {
+			return fmt.Errorf("failed to create order item: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateOrderWithItems updates an order and fully replaces its items atomically.
+func (r *PostgresRepository) UpdateOrderWithItems(ctx context.Context, order *types.DBOrder, items []*types.DBOrderItem) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	now := time.Now()
+	order.UpdatedAt = now
+
+	orderQuery := `
+		UPDATE orders
+		SET vehicle_description = $1, status = $2, updated_at = $3
+		WHERE id = $4
+	`
+	if _, err := tx.Exec(ctx, orderQuery, order.VehicleDescription, order.Status, order.UpdatedAt, order.ID); err != nil {
+		return fmt.Errorf("failed to update order: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM order_items WHERE order_id = $1`, order.ID); err != nil {
+		return fmt.Errorf("failed to delete existing order items: %w", err)
+	}
+
+	itemQuery := `INSERT INTO order_items (id, order_id, menu_item_id, item_name, unit_price, quantity, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	for _, item := range items {
+		item.ID = uuid.New().String()
+		item.OrderID = order.ID
+		item.CreatedAt = now
+
+		if _, err := tx.Exec(ctx, itemQuery, item.ID, item.OrderID, item.MenuItemID, item.ItemName, item.UnitPrice, item.Quantity, item.CreatedAt); err != nil {
 			return fmt.Errorf("failed to create order item: %w", err)
 		}
 	}

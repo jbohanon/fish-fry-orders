@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -83,12 +84,10 @@ func (c *Config) Migrate() error {
 		return fmt.Errorf("failed to create migrations table: %w", err)
 	}
 
-	// Get migrations directory
-	wd, err := os.Getwd()
+	migrationsPath, err := resolveMigrationsPath()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+		return err
 	}
-	migrationsPath := filepath.Join(wd, "internal", "database", "migrations")
 
 	// Auto-discover migration files
 	migrations, err := discoverMigrations(migrationsPath)
@@ -133,6 +132,28 @@ func (c *Config) Migrate() error {
 	}
 
 	return nil
+}
+
+func resolveMigrationsPath() (string, error) {
+	// Preferred path: relative to this source file (works from tests and binaries).
+	if _, thisFile, _, ok := runtime.Caller(0); ok {
+		candidate := filepath.Join(filepath.Dir(thisFile), "migrations")
+		if stat, err := os.Stat(candidate); err == nil && stat.IsDir() {
+			return candidate, nil
+		}
+	}
+
+	// Fallback path: relative to current working directory.
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get working directory: %w", err)
+	}
+	candidate := filepath.Join(wd, "internal", "database", "migrations")
+	if stat, err := os.Stat(candidate); err == nil && stat.IsDir() {
+		return candidate, nil
+	}
+
+	return "", fmt.Errorf("failed to locate migrations directory")
 }
 
 // ensureMigrationsTable creates the schema_migrations table if it doesn't exist
