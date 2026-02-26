@@ -4,7 +4,7 @@
 REGISTRY ?= git.nonahob.net
 IMAGE_NAME_API ?= jacob/fish-fry-orders-api
 IMAGE_NAME_FRONTEND ?= jacob/fish-fry-orders-frontend
-VERSION ?= latest
+VERSION ?= $(shell git rev-parse HEAD)
 
 # Environment configuration
 # Usage: make helm-deploy ENV=demo
@@ -32,6 +32,15 @@ endif
 
 HELM_CHART := helm/fish-fry-orders
 VALUES_FILE := $(HELM_CHART)/configurations/$(CONFIG_DIR)/values.yaml
+HELM_IMAGE_SET_ARGS := --set backend.image.tag=$(VERSION) --set frontend.image.tag=$(VERSION)
+HELM_FRONTEND_VERSION_SET_ARGS :=
+
+ifeq ($(ENV),dev)
+  BUILD_DATE_UTC ?= $(shell date -u +%Y%m%dT%H%M%SZ)
+  HELM_FRONTEND_VERSION_SET_ARGS := --set-string frontend.version=dev-$(BUILD_DATE_UTC)-$(VERSION)
+endif
+
+HELM_SET_ARGS := $(HELM_IMAGE_SET_ARGS) $(HELM_FRONTEND_VERSION_SET_ARGS)
 
 all: proto backend
 
@@ -109,7 +118,8 @@ helm-template:
 	@echo "Templating for environment: $(ENV) (namespace: $(NAMESPACE))"
 	helm template $(RELEASE_NAME) $(HELM_CHART) \
 		-f $(VALUES_FILE) \
-		-n $(NAMESPACE)
+		-n $(NAMESPACE) \
+		$(HELM_SET_ARGS)
 
 # Install the chart for the specified environment
 helm-install:
@@ -117,14 +127,16 @@ helm-install:
 	helm install $(RELEASE_NAME) $(HELM_CHART) \
 		-f $(VALUES_FILE) \
 		-n $(NAMESPACE) \
-		--create-namespace
+		--create-namespace \
+		$(HELM_SET_ARGS)
 
 # Upgrade the chart for the specified environment
 helm-upgrade:
 	@echo "Upgrading environment: $(ENV) (namespace: $(NAMESPACE))"
 	helm upgrade $(RELEASE_NAME) $(HELM_CHART) \
 		-f $(VALUES_FILE) \
-		-n $(NAMESPACE)
+		-n $(NAMESPACE) \
+		$(HELM_SET_ARGS)
 
 # Install or upgrade (idempotent deploy)
 helm-deploy:
@@ -132,7 +144,8 @@ helm-deploy:
 	helm upgrade --install $(RELEASE_NAME) $(HELM_CHART) \
 		-f $(VALUES_FILE) \
 		-n $(NAMESPACE) \
-		--create-namespace
+		--create-namespace \
+		$(HELM_SET_ARGS)
 
 # Uninstall the chart for the specified environment
 helm-uninstall:
@@ -147,20 +160,23 @@ helm-status:
 helm-diff:
 	helm diff upgrade $(RELEASE_NAME) $(HELM_CHART) \
 		-f $(VALUES_FILE) \
-		-n $(NAMESPACE)
+		-n $(NAMESPACE) \
+		$(HELM_SET_ARGS)
 
 # =============================================================================
 # Convenience targets for specific environments
 # =============================================================================
 
 deploy-prod:
-	$(MAKE) helm-deploy ENV=prod
+	@if [ "$(VERSION)" = "latest" ]; then echo "ERROR: VERSION is required for deploy-prod (example: VERSION=$$(git rev-parse HEAD))" >&2; exit 1; fi
+	$(MAKE) helm-deploy ENV=prod VERSION=$(VERSION)
 
 deploy-demo:
-	$(MAKE) helm-deploy ENV=demo
+	@if [ "$(VERSION)" = "latest" ]; then echo "ERROR: VERSION is required for deploy-demo (example: VERSION=$$(git rev-parse HEAD))" >&2; exit 1; fi
+	$(MAKE) helm-deploy ENV=demo VERSION=$(VERSION)
 
 deploy-dev:
-	$(MAKE) helm-deploy ENV=dev
+	$(MAKE) helm-deploy ENV=dev VERSION=$(VERSION)
 
 deploy-all: deploy-prod deploy-demo deploy-dev
 
