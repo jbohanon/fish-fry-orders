@@ -14,6 +14,7 @@ import (
 	"git.nonahob.net/jacob/fish-fry-orders/internal/config"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/database"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/logger"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/metrics"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -68,6 +69,7 @@ func main() {
 		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
 		AllowCredentials: true,
 	}))
+	e.Use(httpMetricsMiddleware())
 	e.Use(errorLoggingMiddleware())
 
 	// Public routes
@@ -109,12 +111,17 @@ func main() {
 	// System routes
 	e.GET("/metrics", echo.WrapHandler(promhttp.Handler()))
 	e.GET("/health", func(c echo.Context) error {
-		// Check database connectivity
-		if err := dbPool.Ping(ctx); err != nil {
+		// Check database connectivity with timeout.
+		pingCtx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
+		defer cancel()
+		if err := dbPool.Ping(pingCtx); err != nil {
 			return c.String(http.StatusServiceUnavailable, "Database unavailable")
 		}
 		return c.String(http.StatusOK, "OK")
 	})
+
+	// Keep a continuously updated database liveness metric for alerting.
+	go monitorDatabase(context.Background(), dbPool, 15*time.Second)
 
 	// Start server
 	logger.Info("Starting server", "address", cfg.HTTP.Address)
@@ -137,6 +144,56 @@ func main() {
 		e.Logger.Fatal(err)
 	}
 	logger.Info("Server stopped")
+}
+
+type dbPinger interface {
+	Ping(context.Context) error
+}
+
+func monitorDatabase(ctx context.Context, dbPool dbPinger, interval time.Duration) {
+	check := func() {
+		start := time.Now()
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		err := dbPool.Ping(pingCtx)
+		cancel()
+		metrics.RecordDatabasePing(err == nil, time.Since(start).Seconds())
+		if err != nil {
+			logger.ErrorWithErr("Database ping failed", err)
+		}
+	}
+
+	check()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			check()
+		}
+	}
+}
+
+func httpMetricsMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			start := time.Now()
+			err := next(c)
+			path := c.Path()
+			if path == "" {
+				path = c.Request().URL.Path
+			}
+			metrics.RecordHTTPRequest(
+				c.Request().Method,
+				path,
+				c.Response().Status,
+				time.Since(start).Seconds(),
+			)
+			return err
+		}
+	}
 }
 
 // errorLoggingMiddleware logs errors before they're returned to the client

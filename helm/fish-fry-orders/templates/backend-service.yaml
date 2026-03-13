@@ -5,6 +5,10 @@ metadata:
   labels:
     {{- include "fish-fry-orders.labels" . | nindent 4 }}
     {{- include "fish-fry-orders.backend.selectorLabels" . | nindent 4 }}
+  {{- with .Values.backend.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ .Values.backend.service.type }}
   ports:

@@ -1,0 +1,38 @@
+{{- if and .Values.monitoring.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PrometheusRule") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "fish-fry-orders.backend.fullname" . }}
+  labels:
+    {{- include "fish-fry-orders.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRuleLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: fish-fry-orders.backend
+      rules:
+        - alert: FishFryBackendTargetDown
+          expr: |
+            absent(up{namespace="{{ .Release.Namespace }}", pod=~"{{ include "fish-fry-orders.backend.fullname" . }}-.*"}) or
+            max_over_time(up{namespace="{{ .Release.Namespace }}", pod=~"{{ include "fish-fry-orders.backend.fullname" . }}-.*"}[5m]) < 1
+          for: 2m
+          labels:
+            severity: {{ .Values.monitoring.alertSeverity | default "critical" | quote }}
+            service: fish-fry-orders-api
+          annotations:
+            summary: Fish Fry Orders backend is down
+            description: No healthy backend scrape targets in namespace {{ .Release.Namespace }} for at least 2 minutes.
+
+        - alert: FishFryDatabaseUnavailable
+          expr: |
+            absent(fish_fry_database_up{namespace="{{ .Release.Namespace }}", pod=~"{{ include "fish-fry-orders.backend.fullname" . }}-.*"}) or
+            max_over_time(fish_fry_database_up{namespace="{{ .Release.Namespace }}", pod=~"{{ include "fish-fry-orders.backend.fullname" . }}-.*"}[5m]) < 1
+          for: 2m
+          labels:
+            severity: {{ .Values.monitoring.alertSeverity | default "critical" | quote }}
+            service: fish-fry-orders-api
+          annotations:
+            summary: Fish Fry Orders database connectivity is failing
+            description: Backend reports database ping failures for at least 2 minutes in namespace {{ .Release.Namespace }}.
+{{- end }}
