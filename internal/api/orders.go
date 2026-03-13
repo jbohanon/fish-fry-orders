@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"git.nonahob.net/jacob/fish-fry-orders/internal/auth"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/database"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/logger"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/types"
@@ -18,15 +19,17 @@ import (
 
 type OrderHandler struct {
 	repo           database.Repository
+	authService    *auth.Service
 	clients        map[*websocket.Conn]bool
 	clientsLock    sync.RWMutex
 	allowedOrigins []string
 	upgrader       websocket.Upgrader
 }
 
-func NewOrderHandler(repo database.Repository, allowedOrigins []string) *OrderHandler {
+func NewOrderHandler(repo database.Repository, authService *auth.Service, allowedOrigins []string) *OrderHandler {
 	h := &OrderHandler{
 		repo:           repo,
+		authService:    authService,
 		clients:        make(map[*websocket.Conn]bool),
 		allowedOrigins: allowedOrigins,
 	}
@@ -52,8 +55,8 @@ func (h *OrderHandler) checkOrigin(r *http.Request) bool {
 
 // CreateOrderRequest represents the request to create an order
 type CreateOrderRequest struct {
-	VehicleDescription string                 `json:"vehicle_description"`
-	CustomerName       string                 `json:"customerName"` // Frontend uses this
+	VehicleDescription string                   `json:"vehicle_description"`
+	CustomerName       string                   `json:"customerName"` // Frontend uses this
 	Items              []CreateOrderItemRequest `json:"items"`
 }
 
@@ -61,6 +64,13 @@ type CreateOrderItemRequest struct {
 	MenuItemID string `json:"menu_item_id"`
 	MenuItemId string `json:"menuItemId"` // Frontend uses camelCase
 	Quantity   int32  `json:"quantity"`
+}
+
+// UpdateOrderRequest represents the request to edit an order.
+type UpdateOrderRequest struct {
+	VehicleDescription string                   `json:"vehicle_description"`
+	CustomerName       string                   `json:"customerName"`
+	Items              []CreateOrderItemRequest `json:"items"`
 }
 
 // OrderResponse represents an order in the API response
@@ -282,6 +292,86 @@ func (h *OrderHandler) getOrderResponse(c echo.Context, orderID int) error {
 	})
 }
 
+// UpdateOrder handles PUT /api/orders/:id
+func (h *OrderHandler) UpdateOrder(c echo.Context) error {
+	orderID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid order ID")
+	}
+
+	var req UpdateOrderRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	vehicleDesc := req.VehicleDescription
+	if vehicleDesc == "" {
+		vehicleDesc = req.CustomerName
+	}
+	if len(req.Items) == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest, "at least one item is required")
+	}
+
+	order, err := h.repo.GetOrderByID(c.Request().Context(), orderID)
+	if err != nil {
+		logger.ErrorWithErr("Failed to get order for update", err, "order_id", orderID)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get order")
+	}
+	if order == nil {
+		return echo.NewHTTPError(http.StatusNotFound, "order not found")
+	}
+
+	user, err := h.authService.GetUser(c.Request())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+	}
+	if (order.Status == "IN_PROGRESS" || order.Status == "COMPLETED") && user.Role != auth.RoleAdmin {
+		return echo.NewHTTPError(http.StatusUnauthorized, "only admins can edit in-progress or completed orders")
+	}
+
+	orderItems := make([]*types.DBOrderItem, 0, len(req.Items))
+	for _, itemReq := range req.Items {
+		menuItemID := itemReq.MenuItemID
+		if menuItemID == "" {
+			menuItemID = itemReq.MenuItemId
+		}
+		if menuItemID == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "menu item ID is required")
+		}
+		if itemReq.Quantity <= 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "item quantity must be greater than zero")
+		}
+
+		menuItem, err := h.repo.GetMenuItemByID(c.Request().Context(), menuItemID)
+		if err != nil {
+			logger.ErrorWithErr("Failed to get menu item for order update", err, "menu_item_id", menuItemID)
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get menu item")
+		}
+		if menuItem == nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "menu item not found: "+menuItemID)
+		}
+
+		// Re-capture menu metadata at edit time.
+		orderItems = append(orderItems, &types.DBOrderItem{
+			MenuItemID: menuItemID,
+			ItemName:   menuItem.Name,
+			UnitPrice:  menuItem.Price,
+			Quantity:   itemReq.Quantity,
+		})
+	}
+
+	order.VehicleDescription = strings.TrimSpace(vehicleDesc)
+	if err := h.repo.UpdateOrderWithItems(c.Request().Context(), order, orderItems); err != nil {
+		logger.ErrorWithErr("Failed to update order with items", err, "order_id", orderID)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update order")
+	}
+
+	h.BroadcastOrderUpdate(c.Request().Context(), order)
+	h.BroadcastStatsUpdate(c.Request().Context())
+
+	return h.getOrderResponse(c, orderID)
+}
+
 // UpdateOrderStatus handles PUT /api/orders/:id/status
 func (h *OrderHandler) UpdateOrderStatus(c echo.Context) error {
 	orderID, err := strconv.Atoi(c.Param("id"))
@@ -329,7 +419,7 @@ func (h *OrderHandler) UpdateOrderStatus(c echo.Context) error {
 
 	// Broadcast update to WebSocket clients
 	h.BroadcastOrderUpdate(c.Request().Context(), order)
-	
+
 	// Broadcast stats update
 	h.BroadcastStatsUpdate(c.Request().Context())
 
@@ -389,7 +479,7 @@ func normalizeStatus(status string) string {
 
 // denormalizeStatus converts API status format to database status
 func denormalizeStatus(status string) string {
-	switch status {
+	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "new":
 		return "NEW"
 	case "in-progress":
@@ -397,7 +487,7 @@ func denormalizeStatus(status string) string {
 	case "completed":
 		return "COMPLETED"
 	default:
-		return strings.ToUpper(status)
+		return ""
 	}
 }
 
