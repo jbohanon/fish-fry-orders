@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	libmigrate "git.nonahob.net/jacob/golibs/datastores/sql/migrate"
+	libpostgres "git.nonahob.net/jacob/golibs/datastores/sql/postgres"
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver
 )
@@ -64,74 +66,27 @@ func (c *Config) Context() context.Context {
 
 // Migrate runs database migrations with auto-discovery
 func (c *Config) Migrate() error {
-	db, err := sql.Open("pgx", c.DSN())
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
-	if err := db.Ping(); err != nil {
-		return fmt.Errorf("failed to ping database: %w", err)
-	}
-
-	ctx := context.Background()
-
-	// Check if schema_migrations table exists (indicates new migration system)
-	migrationsTableExists := c.tableExists(ctx, db, "schema_migrations")
-
-	// Create schema_migrations table if it doesn't exist
-	if err := c.ensureMigrationsTable(ctx, db); err != nil {
-		return fmt.Errorf("failed to create migrations table: %w", err)
-	}
-
 	migrationsPath, err := resolveMigrationsPath()
 	if err != nil {
 		return err
 	}
 
-	// Auto-discover migration files
-	migrations, err := discoverMigrations(migrationsPath)
-	if err != nil {
-		return fmt.Errorf("failed to discover migrations: %w", err)
+	libCfg := toLibPostgresConfig(c)
+	return libCfg.Migrate(&libmigrate.Options{
+		MigrationsDir:  migrationsPath,
+		BootstrapTable: "sessions",
+	})
+}
+
+func toLibPostgresConfig(c *Config) *libpostgres.Config {
+	return &libpostgres.Config{
+		Host:     c.Host,
+		Port:     c.Port,
+		User:     c.User,
+		Password: c.Password,
+		DBName:   c.DBName,
+		SSLMode:  c.SSLMode,
 	}
-
-	// Bootstrap: if schema_migrations was just created but other tables exist,
-	// mark existing migrations as applied based on what tables/columns exist
-	if !migrationsTableExists {
-		if err := c.bootstrapMigrationState(ctx, db, migrations); err != nil {
-			return fmt.Errorf("failed to bootstrap migration state: %w", err)
-		}
-	}
-
-	// Get applied migrations
-	applied, err := c.getAppliedMigrations(ctx, db)
-	if err != nil {
-		return fmt.Errorf("failed to get applied migrations: %w", err)
-	}
-
-	// Apply pending migrations
-	for _, migration := range migrations {
-		if applied[migration] {
-			continue
-		}
-
-		migrationSQL, err := os.ReadFile(filepath.Join(migrationsPath, migration))
-		if err != nil {
-			return fmt.Errorf("failed to read migration file %s: %w", migration, err)
-		}
-
-		if _, err := db.ExecContext(ctx, string(migrationSQL)); err != nil {
-			return fmt.Errorf("failed to execute migration %s: %w", migration, err)
-		}
-
-		if err := c.recordMigration(ctx, db, migration); err != nil {
-			return fmt.Errorf("failed to record migration %s: %w", migration, err)
-		}
-
-		fmt.Printf("Applied migration: %s\n", migration)
-	}
-
-	return nil
 }
 
 func resolveMigrationsPath() (string, error) {
