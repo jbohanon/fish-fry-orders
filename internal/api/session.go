@@ -8,6 +8,7 @@ import (
 
 	"git.nonahob.net/jacob/fish-fry-orders/internal/database"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/logger"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/metrics"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/types"
 	"github.com/labstack/echo/v4"
 )
@@ -26,15 +27,15 @@ func NewSessionHandler(repo database.Repository, orderHandler *OrderHandler) *Se
 
 // SessionResponse represents a session in the API response
 type SessionResponse struct {
-	ID              int        `json:"id"`
-	EventName       string     `json:"eventName"`
-	StartedAt       string     `json:"startedAt"`
-	ExpiresAt       string     `json:"expiresAt"`
-	ClosedAt        *string    `json:"closedAt,omitempty"`
-	Status          string     `json:"status"`
-	FinalOrderCount *int       `json:"finalOrderCount,omitempty"`
-	FinalRevenue    *float64   `json:"finalRevenue,omitempty"`
-	Notes           string     `json:"notes,omitempty"`
+	ID              int      `json:"id"`
+	EventName       string   `json:"eventName"`
+	StartedAt       string   `json:"startedAt"`
+	ExpiresAt       string   `json:"expiresAt"`
+	ClosedAt        *string  `json:"closedAt,omitempty"`
+	Status          string   `json:"status"`
+	FinalOrderCount *int     `json:"finalOrderCount,omitempty"`
+	FinalRevenue    *float64 `json:"finalRevenue,omitempty"`
+	Notes           string   `json:"notes,omitempty"`
 	// Live stats (for active sessions)
 	CurrentOrderCount int     `json:"currentOrderCount,omitempty"`
 	CurrentRevenue    float64 `json:"currentRevenue,omitempty"`
@@ -106,6 +107,7 @@ func (h *SessionHandler) GetCurrentSession(c echo.Context) error {
 	}
 
 	if session == nil {
+		metrics.RecordSessionState(false, nil)
 		return c.JSON(http.StatusOK, map[string]interface{}{
 			"active": false,
 		})
@@ -116,6 +118,7 @@ func (h *SessionHandler) GetCurrentSession(c echo.Context) error {
 	if err != nil {
 		logger.ErrorWithErr("Failed to get session stats", err, "session_id", session.ID)
 	}
+	metrics.RecordSessionState(true, &session.ExpiresAt)
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"active":  true,
@@ -168,6 +171,7 @@ func (h *SessionHandler) CreateSession(c echo.Context) error {
 		logger.ErrorWithErr("Failed to create session", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to create session")
 	}
+	metrics.RecordSessionState(true, &session.ExpiresAt)
 
 	logger.Info("Session created", "session_id", session.ID, "event_name", session.EventName)
 
@@ -241,6 +245,7 @@ func (h *SessionHandler) UpdateSession(c echo.Context) error {
 		logger.ErrorWithErr("Failed to update session", err, "session_id", sessionID)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update session")
 	}
+	metrics.RecordSessionState(true, &session.ExpiresAt)
 
 	logger.Info("Session updated", "session_id", sessionID, "event_name", session.EventName, "expires_at", session.ExpiresAt)
 
@@ -274,6 +279,8 @@ func (h *SessionHandler) CloseSession(c echo.Context) error {
 		logger.ErrorWithErr("Failed to close session", err, "session_id", sessionID)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to close session")
 	}
+	metrics.RecordSessionClosed()
+	metrics.RecordSessionState(false, nil)
 
 	// Fetch updated session
 	session, _ = h.repo.GetSessionByID(c.Request().Context(), sessionID)
