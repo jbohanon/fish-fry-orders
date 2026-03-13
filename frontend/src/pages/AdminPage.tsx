@@ -253,10 +253,6 @@ export function AdminPage() {
       }))
       .filter((item) => item.quantity > 0);
 
-    if (!editingOrderName.trim()) {
-      setError('Vehicle description is required when editing an order');
-      return;
-    }
     if (validItems.length === 0) {
       setError('At least one valid order item is required');
       return;

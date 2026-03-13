@@ -14,7 +14,7 @@ interface OrderItemInput {
 
 export function OrderForm({ onSubmit, isSubmitting }: OrderFormProps) {
   const [customerName, setCustomerName] = useState('');
-  const [items, setItems] = useState<OrderItemInput[]>([{ menuItemId: '', quantity: 1 }]);
+  const [items, setItems] = useState<OrderItemInput[]>([{ menuItemId: '', quantity: '' }]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,7 +25,7 @@ export function OrderForm({ onSubmit, isSubmitting }: OrderFormProps) {
   }, []);
 
   const handleAddItem = () => {
-    setItems([...items, { menuItemId: '', quantity: 1 }]);
+    setItems([...items, { menuItemId: '', quantity: '' }]);
   };
 
   const handleRemoveItem = (index: number) => {
@@ -43,9 +43,9 @@ export function OrderForm({ onSubmit, isSubmitting }: OrderFormProps) {
   const handleQuantityBlur = (index: number) => {
     const newItems = [...items];
     const qty = newItems[index].quantity;
-    // Coerce empty string or invalid values to 1 on blur
-    if (qty === '' || qty === 0 || (typeof qty === 'number' && isNaN(qty))) {
-      newItems[index] = { ...newItems[index], quantity: 1 };
+    // Keep empty values blank; coerce invalid numeric values to blank.
+    if (qty === 0 || (typeof qty === 'number' && isNaN(qty))) {
+      newItems[index] = { ...newItems[index], quantity: '' };
       setItems(newItems);
     }
   };

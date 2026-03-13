@@ -177,11 +177,9 @@ func (r *PostgresRepository) GetOrCreateActiveSession(ctx context.Context) (*typ
 		return session, nil
 	}
 
-	// Create new session
-	now := time.Now().UTC()
-	// Default expiry is end of current UTC day to avoid timezone truncation issues
-	// with TIMESTAMP columns and NOW() comparisons.
-	endOfDay := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, time.UTC)
+	// Create new session in local app time to match manual session creation UX.
+	now := time.Now()
+	endOfDay := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, now.Location())
 
 	session = &types.DBSession{
 		EventName: fmt.Sprintf("Fish Fry %s", now.Format("2006-01-02")),

@@ -107,9 +107,6 @@ func (h *OrderHandler) CreateOrder(c echo.Context) error {
 	if vehicleDesc == "" {
 		vehicleDesc = req.CustomerName
 	}
-	if strings.TrimSpace(vehicleDesc) == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "vehicle description is required")
-	}
 	if len(req.Items) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one item is required")
 	}
@@ -310,9 +307,6 @@ func (h *OrderHandler) UpdateOrder(c echo.Context) error {
 	vehicleDesc := req.VehicleDescription
 	if vehicleDesc == "" {
 		vehicleDesc = req.CustomerName
-	}
-	if strings.TrimSpace(vehicleDesc) == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "vehicle description is required")
 	}
 	if len(req.Items) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "at least one item is required")
