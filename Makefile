@@ -1,4 +1,4 @@
-.PHONY: all build test clean proto backend docker deploy helm-lint helm-template frontend
+.PHONY: all build test clean proto backend docker deploy helm-lint helm-template frontend dev-release
 
 # Container registry - override with: make docker-push REGISTRY=myregistry.io
 REGISTRY ?= git.nonahob.net
@@ -177,6 +177,25 @@ deploy-demo:
 
 deploy-dev:
 	$(MAKE) helm-deploy ENV=dev VERSION=$(VERSION)
+
+# Build, push, and deploy to dev with a unique per-run tag.
+# Useful for rapid iteration without creating a commit each deploy.
+# Tag format: <short-sha>-<workspace-hash>, where workspace-hash includes
+# tracked diff against HEAD plus untracked file contents.
+dev-release:
+	@DEV_VERSION="$$( \
+		BASE_SHA=$$(git rev-parse --short HEAD); \
+		WORK_HASH=$$( \
+			( \
+				git diff --binary HEAD -- .; \
+				git ls-files --others --exclude-standard -z | xargs -0 -r -I{} sh -c 'printf "UNTRACKED %s\n" "$$1"; sha1sum "$$1"' _ {}; \
+			) | sha1sum | cut -c1-12 \
+		); \
+		printf "%s-%s" "$$BASE_SHA" "$$WORK_HASH" \
+	)"; \
+	echo "Using dev VERSION=$$DEV_VERSION"; \
+	$(MAKE) docker-push VERSION="$$DEV_VERSION" && \
+	$(MAKE) deploy-dev VERSION="$$DEV_VERSION"
 
 deploy-all: deploy-prod deploy-demo deploy-dev
 

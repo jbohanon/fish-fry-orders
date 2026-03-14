@@ -25,6 +25,10 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 // Sessions
 
 func (r *PostgresRepository) GetActiveSession(ctx context.Context) (*types.DBSession, error) {
+	if err := r.reconcileActiveSessions(ctx); err != nil {
+		return nil, fmt.Errorf("failed to reconcile active sessions: %w", err)
+	}
+
 	query := `
 		SELECT id, event_name, started_at, expires_at, closed_at, status, 
 		       final_order_count, final_revenue, notes, created_at, updated_at
@@ -71,6 +75,10 @@ func (r *PostgresRepository) GetSessionByID(ctx context.Context, id int) (*types
 }
 
 func (r *PostgresRepository) GetSessions(ctx context.Context, from, to *time.Time) ([]types.DBSession, error) {
+	if err := r.reconcileActiveSessions(ctx); err != nil {
+		return nil, fmt.Errorf("failed to reconcile sessions: %w", err)
+	}
+
 	query := `
 		SELECT id, event_name, started_at, expires_at, closed_at, status, 
 		       final_order_count, final_revenue, notes, created_at, updated_at
@@ -168,6 +176,10 @@ func (r *PostgresRepository) CloseSession(ctx context.Context, sessionID int) er
 }
 
 func (r *PostgresRepository) GetOrCreateActiveSession(ctx context.Context) (*types.DBSession, error) {
+	if err := r.reconcileActiveSessions(ctx); err != nil {
+		return nil, fmt.Errorf("failed to reconcile active sessions: %w", err)
+	}
+
 	// Try to get existing active session
 	session, err := r.GetActiveSession(ctx)
 	if err != nil {
@@ -194,6 +206,36 @@ func (r *PostgresRepository) GetOrCreateActiveSession(ctx context.Context) (*typ
 
 	logger.Info("Auto-created new session", "session_id", session.ID, "event_name", session.EventName)
 	return session, nil
+}
+
+func (r *PostgresRepository) reconcileActiveSessions(ctx context.Context) error {
+	// Close expired active sessions so session history and active checks stay consistent.
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE sessions
+		SET status = 'CLOSED',
+		    closed_at = COALESCE(closed_at, NOW()),
+		    updated_at = NOW()
+		WHERE status = 'ACTIVE' AND expires_at <= NOW()
+	`); err != nil {
+		return err
+	}
+
+	// Defensive cleanup: if multiple ACTIVE sessions exist, keep newest and close the rest.
+	_, err := r.pool.Exec(ctx, `
+		WITH ranked AS (
+			SELECT id,
+			       ROW_NUMBER() OVER (ORDER BY started_at DESC, id DESC) AS rn
+			FROM sessions
+			WHERE status = 'ACTIVE' AND expires_at > NOW()
+		)
+		UPDATE sessions s
+		SET status = 'CLOSED',
+		    closed_at = COALESCE(closed_at, NOW()),
+		    updated_at = NOW()
+		FROM ranked r
+		WHERE s.id = r.id AND r.rn > 1
+	`)
+	return err
 }
 
 func (r *PostgresRepository) GetNextDailyOrderNumber(ctx context.Context, sessionID int) (int, error) {

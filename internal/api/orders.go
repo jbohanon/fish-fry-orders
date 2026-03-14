@@ -12,6 +12,7 @@ import (
 	"git.nonahob.net/jacob/fish-fry-orders/internal/auth"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/database"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/logger"
+	"git.nonahob.net/jacob/fish-fry-orders/internal/metrics"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/types"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -127,6 +128,7 @@ func (h *OrderHandler) CreateOrder(c echo.Context) error {
 
 	// Build order items with captured prices (validate menu items first)
 	orderItems := make([]*types.DBOrderItem, 0, len(req.Items))
+	var orderTotal float64
 	for _, itemReq := range req.Items {
 		menuItemID := itemReq.MenuItemID
 		if menuItemID == "" {
@@ -149,6 +151,7 @@ func (h *OrderHandler) CreateOrder(c echo.Context) error {
 			UnitPrice:  menuItem.Price, // Capture at order time
 			Quantity:   itemReq.Quantity,
 		})
+		orderTotal += menuItem.Price * float64(itemReq.Quantity)
 	}
 
 	// Create order with items in a single transaction
@@ -174,6 +177,7 @@ func (h *OrderHandler) CreateOrder(c echo.Context) error {
 		"daily_order_number", order.DailyOrderNumber,
 		"vehicle_description", vehicleDesc,
 	)
+	metrics.RecordOrderCreated(len(orderItems), orderTotal)
 
 	// Fetch the complete order with items for response
 	createdOrder, err := h.repo.GetOrderByID(ctx, order.ID)
@@ -330,6 +334,7 @@ func (h *OrderHandler) UpdateOrder(c echo.Context) error {
 	}
 
 	orderItems := make([]*types.DBOrderItem, 0, len(req.Items))
+	var orderTotal float64
 	for _, itemReq := range req.Items {
 		menuItemID := itemReq.MenuItemID
 		if menuItemID == "" {
@@ -358,6 +363,7 @@ func (h *OrderHandler) UpdateOrder(c echo.Context) error {
 			UnitPrice:  menuItem.Price,
 			Quantity:   itemReq.Quantity,
 		})
+		orderTotal += menuItem.Price * float64(itemReq.Quantity)
 	}
 
 	order.VehicleDescription = strings.TrimSpace(vehicleDesc)
@@ -365,6 +371,7 @@ func (h *OrderHandler) UpdateOrder(c echo.Context) error {
 		logger.ErrorWithErr("Failed to update order with items", err, "order_id", orderID)
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update order")
 	}
+	metrics.RecordOrderUpdated(len(orderItems), orderTotal)
 
 	h.BroadcastOrderUpdate(c.Request().Context(), order)
 	h.BroadcastStatsUpdate(c.Request().Context())
@@ -416,6 +423,10 @@ func (h *OrderHandler) UpdateOrderStatus(c echo.Context) error {
 	}
 
 	logger.Info("Order status updated", "order_id", orderID, "old_status", oldStatus, "new_status", normalizedStatus)
+	metrics.RecordOrderStatusTransition(oldStatus, normalizedStatus)
+	if normalizedStatus == "COMPLETED" && oldStatus != "COMPLETED" {
+		metrics.RecordOrderCompletionTime(time.Since(order.CreatedAt).Seconds())
+	}
 
 	// Broadcast update to WebSocket clients
 	h.BroadcastOrderUpdate(c.Request().Context(), order)
@@ -502,12 +513,14 @@ func (h *OrderHandler) HandleWebSocket(c echo.Context) error {
 	// Register client
 	h.clientsLock.Lock()
 	h.clients[ws] = true
+	metrics.RecordWebSocketClients(len(h.clients))
 	h.clientsLock.Unlock()
 
 	// Unregister on disconnect
 	defer func() {
 		h.clientsLock.Lock()
 		delete(h.clients, ws)
+		metrics.RecordWebSocketClients(len(h.clients))
 		h.clientsLock.Unlock()
 	}()
 
