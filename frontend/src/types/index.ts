@@ -105,14 +105,6 @@ export interface UpdateStatusRequest {
   status: OrderStatus;
 }
 
-export interface UpdateOrderRequest {
-  customerName: string;
-  items: {
-    menuItemId: string;
-    quantity: number;
-  }[];
-}
-
 export interface PurgeOrdersRequest {
   scope: 'today' | 'all';
 }

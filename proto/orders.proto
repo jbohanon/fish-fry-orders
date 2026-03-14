@@ -55,7 +55,6 @@ message OrderStatistics {
 service OrderService {
   // Order management
   rpc CreateOrder(CreateOrderRequest) returns (Order) {}
-  rpc UpdateOrder(UpdateOrderRequest) returns (Order) {}
   rpc UpdateOrderStatus(UpdateOrderStatusRequest) returns (Order) {}
   rpc GetOrders(GetOrdersRequest) returns (stream Order) {}
   
@@ -75,12 +74,6 @@ service OrderService {
 message CreateOrderRequest {
   string vehicle_description = 1;
   repeated OrderItem items = 2;
-}
-
-message UpdateOrderRequest {
-  string order_id = 1;
-  string vehicle_description = 2;
-  repeated OrderItem items = 3;
 }
 
 message UpdateOrderStatusRequest {
