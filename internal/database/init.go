@@ -6,8 +6,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"git.nonahob.net/jacob/fish-fry-orders/internal/config"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Init initializes the database connection and runs migrations
@@ -70,6 +70,28 @@ func InitFromConfig(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.P
 	// Create repository using the pool
 	repo := NewPostgresRepository(pool)
 
+	return pool, repo, nil
+}
+
+// InitFromConfigNoPing initializes the repository from config without a startup
+// database ping or migration run. This is useful for long-running services that
+// must remain alive while the database is temporarily unavailable.
+func InitFromConfigNoPing(ctx context.Context, cfg *config.DatabaseConfig) (*pgxpool.Pool, Repository, error) {
+	dbConfig := &Config{
+		Host:     cfg.Host,
+		Port:     strconv.Itoa(cfg.Port),
+		User:     cfg.User,
+		Password: cfg.Password,
+		DBName:   cfg.DBName,
+		SSLMode:  cfg.SSLMode,
+	}
+
+	pool, err := NewPoolNoPing(ctx, dbConfig, DefaultPoolConfig())
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create connection pool: %w", err)
+	}
+
+	repo := NewPostgresRepository(pool)
 	return pool, repo, nil
 }
 

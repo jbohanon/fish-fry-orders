@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,14 +39,19 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Initialize database
+	// Initialize database pool/repository without requiring DB availability at startup.
 	ctx := context.Background()
-	dbPool, dbRepo, err := database.InitFromConfig(ctx, &cfg.Database)
+	dbPool, dbRepo, err := database.InitFromConfigNoPing(ctx, &cfg.Database)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer dbPool.Close()
-	logger.Info("Database initialized successfully", "host", cfg.Database.Host, "port", cfg.Database.Port, "dbname", cfg.Database.DBName)
+	logger.Info(
+		"Database pool initialized (startup is DB-tolerant)",
+		"host", cfg.Database.Host,
+		"port", cfg.Database.Port,
+		"dbname", cfg.Database.DBName,
+	)
 
 	// Create Echo instance
 	e := echo.New()
@@ -63,6 +71,7 @@ func main() {
 	// Middleware
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
+	var dbUp atomic.Bool
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins:     allowedOrigins,
 		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
@@ -70,7 +79,7 @@ func main() {
 		AllowCredentials: true,
 	}))
 	e.Use(httpMetricsMiddleware())
-	e.Use(errorLoggingMiddleware())
+	e.Use(errorLoggingMiddleware(&dbUp))
 
 	// Public routes
 	authGroup := e.Group("/api/auth")
@@ -121,8 +130,12 @@ func main() {
 		return c.String(http.StatusOK, "OK")
 	})
 
+	backgroundCtx, cancelBackground := context.WithCancel(context.Background())
+	defer cancelBackground()
+
 	// Keep a continuously updated database liveness metric for alerting.
-	go monitorDatabase(context.Background(), dbPool, 15*time.Second)
+	go monitorDatabase(backgroundCtx, dbPool, 15*time.Second, &dbUp)
+	go runMigrationsWithRetry(backgroundCtx, &cfg.Database, 15*time.Second)
 
 	// Start server
 	logger.Info("Starting server", "address", cfg.HTTP.Address)
@@ -138,6 +151,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	logger.Info("Shutting down server...")
+	cancelBackground()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := e.Shutdown(shutdownCtx); err != nil {
@@ -151,12 +165,43 @@ type dbPinger interface {
 	Ping(context.Context) error
 }
 
-func monitorDatabase(ctx context.Context, dbPool dbPinger, interval time.Duration) {
+func runMigrationsWithRetry(ctx context.Context, cfg *config.DatabaseConfig, interval time.Duration) {
+	dbCfg := &database.Config{
+		Host:     cfg.Host,
+		Port:     fmt.Sprintf("%d", cfg.Port),
+		User:     cfg.User,
+		Password: cfg.Password,
+		DBName:   cfg.DBName,
+		SSLMode:  cfg.SSLMode,
+	}
+
+	// Try once immediately, then periodically until success or shutdown.
+	for {
+		err := dbCfg.Migrate()
+		if err == nil {
+			logger.Info("Database migrations are up to date")
+			return
+		}
+
+		logger.ErrorWithErr("Database migrations unavailable; will retry", err, "retry_interval", interval.String())
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
+}
+
+func monitorDatabase(ctx context.Context, dbPool dbPinger, interval time.Duration, dbUp *atomic.Bool) {
 	check := func() {
 		start := time.Now()
 		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		err := dbPool.Ping(pingCtx)
 		cancel()
+		if dbUp != nil {
+			dbUp.Store(err == nil)
+		}
 		metrics.RecordDatabasePing(err == nil, time.Since(start).Seconds())
 		if err != nil {
 			logger.ErrorWithErr("Database ping failed", err)
@@ -198,11 +243,14 @@ func httpMetricsMiddleware() echo.MiddlewareFunc {
 }
 
 // errorLoggingMiddleware logs errors before they're returned to the client
-func errorLoggingMiddleware() echo.MiddlewareFunc {
+func errorLoggingMiddleware(dbUp *atomic.Bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			err := next(c)
 			if err != nil {
+				if shouldReturnBadGateway(err, dbUp) {
+					return echo.NewHTTPError(http.StatusBadGateway, "Database unavailable")
+				}
 				// Log the error with context
 				he, ok := err.(*echo.HTTPError)
 				if ok {
@@ -228,4 +276,17 @@ func errorLoggingMiddleware() echo.MiddlewareFunc {
 			return err
 		}
 	}
+}
+
+func shouldReturnBadGateway(err error, dbUp *atomic.Bool) bool {
+	if dbUp == nil || dbUp.Load() {
+		return false
+	}
+
+	var he *echo.HTTPError
+	if !errors.As(err, &he) {
+		return true
+	}
+
+	return he.Code >= http.StatusInternalServerError
 }
