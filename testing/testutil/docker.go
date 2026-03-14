@@ -31,7 +31,7 @@ type DockerComposeManager struct {
 
 // DockerComposeConfig holds configuration for the docker-compose manager
 type DockerComposeConfig struct {
-	WorkDir    string // Directory where docker-compose.yml will be created
+	WorkDir     string // Directory where docker-compose.yml will be created
 	ProjectName string // Docker Compose project name (optional, will be randomized if empty)
 }
 
@@ -47,7 +47,7 @@ func NewDockerComposeManager(cfg DockerComposeConfig) (*DockerComposeManager, er
 
 	// Generate random values to avoid conflicts
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	
+
 	projectName := cfg.ProjectName
 	if projectName == "" {
 		projectName = fmt.Sprintf("fishfrytest%d", rng.Intn(999999))
@@ -181,12 +181,12 @@ func (dcm *DockerComposeManager) waitForPostgres(ctx context.Context) error {
 			// Try to connect to the database directly
 			// This is more reliable than docker exec and won't hang
 			checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			
+
 			// First, try a simple TCP connection to see if the port is open
 			conn, err := net.DialTimeout("tcp", net.JoinHostPort("localhost", strconv.Itoa(dcm.dbPort)), 1*time.Second)
 			if err == nil {
 				conn.Close()
-				
+
 				// Port is open, now try a real database connection
 				pgxConn, err := pgx.Connect(checkCtx, dsn)
 				if err == nil {
@@ -231,19 +231,21 @@ func (dcm *DockerComposeManager) Stop(ctx context.Context) error {
 // Cleanup removes the docker-compose file and work directory
 func (dcm *DockerComposeManager) Cleanup() error {
 	dcm.mu.Lock()
-	defer dcm.mu.Unlock()
-
 	if dcm.cleanupCalled {
+		dcm.mu.Unlock()
 		return nil
 	}
+	dcm.cleanupCalled = true
+	wasStarted := dcm.started
+	dcm.mu.Unlock()
 
 	ctx := context.Background()
-		if dcm.started {
-			if err := dcm.Stop(ctx); err != nil {
-				// Log but don't fail cleanup
-				fmt.Fprintf(os.Stderr, "Warning: failed to stop docker compose during cleanup: %v\n", err)
-			}
+	if wasStarted {
+		if err := dcm.Stop(ctx); err != nil {
+			// Log but don't fail cleanup
+			fmt.Fprintf(os.Stderr, "Warning: failed to stop docker compose during cleanup: %v\n", err)
 		}
+	}
 
 	// Remove the work directory
 	if dcm.workDir != "" {
@@ -252,7 +254,6 @@ func (dcm *DockerComposeManager) Cleanup() error {
 		}
 	}
 
-	dcm.cleanupCalled = true
 	return nil
 }
 

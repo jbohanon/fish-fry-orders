@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 
+	libmigrate "git.nonahob.net/jacob/golibs/datastores/sql/migrate"
+	libpostgres "git.nonahob.net/jacob/golibs/datastores/sql/postgres"
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver
 )
@@ -63,76 +66,49 @@ func (c *Config) Context() context.Context {
 
 // Migrate runs database migrations with auto-discovery
 func (c *Config) Migrate() error {
-	db, err := sql.Open("pgx", c.DSN())
+	migrationsPath, err := resolveMigrationsPath()
 	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
-	if err := db.Ping(); err != nil {
-		return fmt.Errorf("failed to ping database: %w", err)
+		return err
 	}
 
-	ctx := context.Background()
+	libCfg := toLibPostgresConfig(c)
+	return libCfg.Migrate(&libmigrate.Options{
+		MigrationsDir:  migrationsPath,
+		BootstrapTable: "sessions",
+	})
+}
 
-	// Check if schema_migrations table exists (indicates new migration system)
-	migrationsTableExists := c.tableExists(ctx, db, "schema_migrations")
+func toLibPostgresConfig(c *Config) *libpostgres.Config {
+	return &libpostgres.Config{
+		Host:     c.Host,
+		Port:     c.Port,
+		User:     c.User,
+		Password: c.Password,
+		DBName:   c.DBName,
+		SSLMode:  c.SSLMode,
+	}
+}
 
-	// Create schema_migrations table if it doesn't exist
-	if err := c.ensureMigrationsTable(ctx, db); err != nil {
-		return fmt.Errorf("failed to create migrations table: %w", err)
+func resolveMigrationsPath() (string, error) {
+	// Preferred path: relative to this source file (works from tests and binaries).
+	if _, thisFile, _, ok := runtime.Caller(0); ok {
+		candidate := filepath.Join(filepath.Dir(thisFile), "migrations")
+		if stat, err := os.Stat(candidate); err == nil && stat.IsDir() {
+			return candidate, nil
+		}
 	}
 
-	// Get migrations directory
+	// Fallback path: relative to current working directory.
 	wd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+		return "", fmt.Errorf("failed to get working directory: %w", err)
 	}
-	migrationsPath := filepath.Join(wd, "internal", "database", "migrations")
-
-	// Auto-discover migration files
-	migrations, err := discoverMigrations(migrationsPath)
-	if err != nil {
-		return fmt.Errorf("failed to discover migrations: %w", err)
+	candidate := filepath.Join(wd, "internal", "database", "migrations")
+	if stat, err := os.Stat(candidate); err == nil && stat.IsDir() {
+		return candidate, nil
 	}
 
-	// Bootstrap: if schema_migrations was just created but other tables exist,
-	// mark existing migrations as applied based on what tables/columns exist
-	if !migrationsTableExists {
-		if err := c.bootstrapMigrationState(ctx, db, migrations); err != nil {
-			return fmt.Errorf("failed to bootstrap migration state: %w", err)
-		}
-	}
-
-	// Get applied migrations
-	applied, err := c.getAppliedMigrations(ctx, db)
-	if err != nil {
-		return fmt.Errorf("failed to get applied migrations: %w", err)
-	}
-
-	// Apply pending migrations
-	for _, migration := range migrations {
-		if applied[migration] {
-			continue
-		}
-
-		migrationSQL, err := os.ReadFile(filepath.Join(migrationsPath, migration))
-		if err != nil {
-			return fmt.Errorf("failed to read migration file %s: %w", migration, err)
-		}
-
-		if _, err := db.ExecContext(ctx, string(migrationSQL)); err != nil {
-			return fmt.Errorf("failed to execute migration %s: %w", migration, err)
-		}
-
-		if err := c.recordMigration(ctx, db, migration); err != nil {
-			return fmt.Errorf("failed to record migration %s: %w", migration, err)
-		}
-
-		fmt.Printf("Applied migration: %s\n", migration)
-	}
-
-	return nil
+	return "", fmt.Errorf("failed to locate migrations directory")
 }
 
 // ensureMigrationsTable creates the schema_migrations table if it doesn't exist
